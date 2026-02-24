@@ -1,7 +1,6 @@
 import logging
 
 import discord
-from discord.ext import commands
 
 from config import Config
 from database import db
@@ -14,7 +13,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class PredictionBot(commands.Bot):
+class PredictionBot(discord.Bot):
     """Main bot class for the prediction and streaming points system"""
 
     def __init__(self):
@@ -24,28 +23,7 @@ class PredictionBot(commands.Bot):
         intents.presences = True
         intents.guilds = True
 
-        super().__init__(
-            command_prefix='$',
-            intents=intents,
-            case_insensitive=True,
-            help_command=commands.DefaultHelpCommand()
-        )
-
-    async def setup_hook(self):
-        """Load cogs during bot setup"""
-        cogs = [
-            'cogs.predictions',
-            'cogs.points',
-            'cogs.streams',
-            'cogs.stats'
-        ]
-
-        for cog in cogs:
-            try:
-                await self.load_extension(cog)
-                logger.info(f"Loaded cog: {cog}")
-            except Exception as e:
-                logger.error(f"Failed to load cog {cog}: {e}")
+        super().__init__(intents=intents)
 
     async def on_ready(self):
         """Called when the bot is ready"""
@@ -62,7 +40,7 @@ class PredictionBot(commands.Bot):
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name="streams | $help"
+                name="streams | Use /help"
             )
         )
 
@@ -76,35 +54,38 @@ class PredictionBot(commands.Bot):
         """Called when bot leaves a guild"""
         logger.info(f"Left guild: {guild.name} (ID: {guild.id})")
 
-    async def on_command_error(self, ctx: commands.Context, error: Exception):
-        """Global error handler"""
-        if isinstance(error, commands.CommandNotFound):
+    async def on_application_command_error(self, ctx: discord.ApplicationContext, error: Exception):
+        """Global error handler for slash commands"""
+        if isinstance(error, discord.CheckFailure):
+            await ctx.respond("❌ You don't have permission to use this command.", ephemeral=True)
             return
 
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send(f"❌ You don't have permission to use this command.")
-            return
-
-        if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(f"❌ Missing required argument: {error.param.name}")
-            return
-
-        if isinstance(error, commands.BadArgument):
-            await ctx.send(f"❌ Invalid argument provided.")
-            return
-
-        if isinstance(error, commands.NoPrivateMessage):
-            await ctx.send(f"❌ This command cannot be used in DMs.")
-            return
+        if isinstance(error, discord.ApplicationCommandInvokeError):
+            error = error.original
 
         # Log unexpected errors
         logger.error(f"Unexpected error in command {ctx.command}: {error}", exc_info=error)
-        await ctx.send(f"❌ An unexpected error occurred. Please try again later.")
+        await ctx.respond("❌ An unexpected error occurred. Please try again later.", ephemeral=True)
 
 
 def main():
     """Main entry point"""
     bot = PredictionBot()
+
+    # Load cogs
+    cogs = [
+        'cogs.predictions',
+        'cogs.points',
+        'cogs.streams',
+        'cogs.stats'
+    ]
+
+    for cog in cogs:
+        try:
+            bot.load_extension(cog)
+            logger.info(f"Loaded cog: {cog}")
+        except Exception as e:
+            logger.error(f"Failed to load cog {cog}: {e}")
 
     try:
         bot.run(Config.DISCORD_TOKEN)

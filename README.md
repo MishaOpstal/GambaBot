@@ -1,6 +1,6 @@
 # Discord Prediction & Streaming Points Bot
 
-A modern Discord bot that allows users to earn points by watching streams and participate in predictions/betting.
+A modern Discord bot that allows users to earn points by watching streams and participate in predictions/betting using **slash commands**.
 
 ## Features
 
@@ -71,6 +71,7 @@ Your bot needs the following permissions:
 - Embed Links
 - Read Message History
 - Use External Emojis
+- Use Slash Commands
 - Connect (for voice channel tracking)
 - View Voice Channels
 
@@ -81,45 +82,57 @@ Intents required:
 
 ## Commands
 
-### Prediction Commands (Guild Only)
+All commands use Discord's native **slash commands** (/) interface. Start typing `/` in Discord to see all available commands!
+
+### Prediction Commands
 
 #### Admin Commands
-- `$start <time_seconds> "<question>" "<believe_answer>" "<doubt_answer>"` - Start a new prediction
-  - Example: `$start 300 "Will it rain?" "Yes" "No"`
-- `$won <believe|doubt>` - Resolve prediction and distribute winnings
-- `$refund` - Cancel prediction and refund all bets
-- `$close` - Close betting early
+- `/prediction start` - Start a new prediction
+  - Example: `/prediction start time_seconds:300 question:"Will it rain?" believe_answer:"Yes" doubt_answer:"No"`
+- `/prediction resolve` - Resolve prediction and distribute winnings
+  - Choose `winner:believe` or `winner:doubt`
+- `/prediction refund` - Cancel prediction and refund all bets
+- `/prediction show` - Show current active prediction
 
 #### User Commands
-- `$believe <amount> [@streamer]` - Bet on the believe side
-  - If no streamer specified, uses your first available points
-- `$doubt <amount> [@streamer]` - Bet on the doubt side
-- `$prediction` - Show current active prediction
+- `/bet` - Place a bet on the active prediction
+  - Example: `/bet side:believe amount:100`
+  - Optional: Specify which streamer's points to use with `streamer:@username`
 
 ### Points Commands
 
 #### User Commands
-- `$points [@member]` - Show your or someone else's points
-- `$setpointname <name>` - Set your custom point name
-- `$setpointrate <rate>` - Set your points earning rate
-- `$leaderboard [@streamer]` - Show points leaderboard
-- `$streamerinfo [@streamer]` - Show streamer's settings
+- `/points show` - Show your or someone else's points
+  - Optional: Check another user with `member:@username`
+- `/points setname` - Set your custom point name
+  - Example: `/points setname name:cookies`
+- `/points setrate` - Set your points earning rate
+  - Example: `/points setrate rate:100`
+- `/leaderboard` - Show points leaderboard
+  - Optional: Show for specific streamer with `streamer:@username`
+- `/streamerinfo` - Show streamer's settings
+  - Optional: Check specific streamer with `streamer:@username`
 
 #### Admin Commands
-- `$give @member @streamer <amount>` - Give points to a member
-- `$take @member @streamer <amount>` - Take points from a member
+- `/points give` - Give points to a member
+  - Example: `/points give member:@user streamer:@streamer amount:100`
+- `/points take` - Take points from a member
+  - Example: `/points take member:@user streamer:@streamer amount:50`
 
 ### Stream Commands
 
-- `$viewers [@streamer]` - Show who's watching a stream
-- `$streams` - Show all active streams in the server
+- `/viewers` - Show who's watching a stream
+  - Optional: Check specific streamer with `streamer:@username`
+- `/streams` - Show all active streams in the server
 
 ### Statistics Commands (Work in DMs!)
 
-- `$mystats [page]` - Show your stats across all servers (paginated)
-- `$serverstats [server_name]` - Show your stats for a specific server
-- `$activebets` - Show which servers have active predictions
-- `$myservers` - List all servers you share with the bot
+- `/mystats` - Show your stats across all servers (paginated)
+  - Optional: Navigate pages with `page:2`
+- `/serverstats` - Show your stats for a specific server
+  - In DMs, use `server_name:"Server Name"`
+- `/activebets` - Show which servers have active predictions
+- `/myservers` - List all servers you share with the bot
 
 ## How It Works
 
@@ -157,15 +170,15 @@ Example:
 
 ## Architecture
 
-- **bot.py**: Main bot initialization and event handling
+- **bot.py**: Main bot initialization using py-cord
 - **config.py**: Configuration management from environment variables
 - **database.py**: Redis database wrapper with all data operations
-- **cogs/**: Modular command groups
+- **cogs/**: Modular command groups using slash commands
   - `predictions.py`: Prediction and betting system
   - `points.py`: Points management and streamer settings
   - `streams.py`: Stream tracking and point awarding
   - `stats.py`: Statistics and DM functionality
-- **utils/helpers.py**: Utility functions
+- **helpers/**: Utility functions
 
 ### Database Structure (Redis)
 
@@ -188,9 +201,10 @@ Example:
 - Verify `POINTS_EARN_INTERVAL` in `.env`
 - Ensure viewers are in the same voice channel as streamer
 
-### Commands not working in DMs
-- Some commands are guild-only (predictions, points management)
-- Statistics commands ($mystats, $activebets, etc.) work in DMs
+### Slash commands not showing up
+- Make sure the bot has "Use Slash Commands" permission
+- Commands may take up to 1 hour to register globally
+- Try kicking and re-inviting the bot to your server
 
 ## Development
 
@@ -219,8 +233,17 @@ Example:
 ### Adding New Features
 
 1. Create a new cog in `cogs/` directory
-2. Add async `setup(bot)` function at the end
-3. Bot will automatically load it on startup
+2. Use `discord.slash_command()` decorator for commands
+3. Add `def setup(bot)` function at the end
+4. Bot will automatically load it on startup
+
+## Migration from Prefix Commands
+
+This version uses Discord's native slash commands instead of prefix commands (`$`). Benefits include:
+- Native Discord UI with autocomplete
+- Built-in help text and option validation
+- Better mobile experience
+- Clearer command discovery
 
 ## License
 
@@ -228,4 +251,4 @@ MIT License - feel free to modify and use as needed!
 
 ## Credits
 
-Modernized and rewritten from the original MongoDB-based prediction bot.
+Modernized and rewritten from the original MongoDB-based prediction bot with slash command support using py-cord.

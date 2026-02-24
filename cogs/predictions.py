@@ -1,72 +1,108 @@
 from datetime import datetime, timedelta
 from typing import Optional
+import uuid
 
 import discord
-from discord.ext import commands, tasks
+from discord.ext import tasks
+from discord.commands import SlashCommandGroup, option
 
 from database import db
 from helpers.calculation_helper import calculate_percentages, calculate_winnings
 from helpers.format_helper import format_time
 
 
-class Predictions(commands.Cog):
+class Predictions(discord.Cog):
     """Cog for managing predictions and betting"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.active_timers = {}  # guild_id -> task
+        self.active_timers = {}  # (guild_id, prediction_id) -> end_time
         self.check_timers.start()
+        # Resume timers on startup
+        self.bot.loop.create_task(self.resume_predictions())
+
+    prediction = SlashCommandGroup("prediction", "Prediction and betting commands")
 
     def cog_unload(self):
         self.check_timers.cancel()
+
+    async def resume_predictions(self):
+        """Resume all active predictions after bot restart"""
+        await self.bot.wait_until_ready()
+
+        all_predictions = db.get_all_active_predictions()
+        resumed_count = 0
+
+        for guild_id, prediction_ids in all_predictions.items():
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                continue
+
+            for prediction_id in prediction_ids:
+                prediction = db.get_prediction(guild_id, prediction_id)
+                if not prediction:
+                    continue
+
+                end_time = datetime.fromisoformat(prediction['end_time'])
+
+                # If prediction hasn't expired yet, resume timer
+                if datetime.now() < end_time and not prediction.get('closed'):
+                    self.active_timers[(guild_id, prediction_id)] = end_time
+                    resumed_count += 1
+                # If prediction expired while bot was down, close it now
+                elif not prediction.get('closed'):
+                    channel = guild.get_channel(prediction.get('channel_id'))
+                    if channel:
+                        await self.close_submissions(channel, guild_id, prediction_id)
+                    resumed_count += 1
+
+        if resumed_count > 0:
+            print(f"[Predictions] Resumed {resumed_count} active predictions")
 
     @tasks.loop(seconds=1)
     async def check_timers(self):
         """Check and update prediction timers"""
         current_time = datetime.now()
 
-        for guild_id in list(self.active_timers.keys()):
-            prediction = db.get_prediction(guild_id)
-            if not prediction:
-                del self.active_timers[guild_id]
-                continue
-
-            end_time = datetime.fromisoformat(prediction['end_time'])
-
+        for (guild_id, prediction_id), end_time in list(self.active_timers.items()):
             if current_time >= end_time:
                 # Timer expired
+                prediction = db.get_prediction(guild_id, prediction_id)
+                if not prediction:
+                    del self.active_timers[(guild_id, prediction_id)]
+                    continue
+
                 guild = self.bot.get_guild(guild_id)
                 if guild and prediction.get('channel_id'):
                     channel = guild.get_channel(prediction['channel_id'])
                     if channel:
-                        await self.close_submissions(channel, guild_id)
+                        await self.close_submissions(channel, guild_id, prediction_id)
 
-                del self.active_timers[guild_id]
+                del self.active_timers[(guild_id, prediction_id)]
 
     @check_timers.before_loop
     async def before_check_timers(self):
         await self.bot.wait_until_ready()
 
-    @commands.command(name='start', aliases=['predict'])
-    @commands.guild_only()
-    @commands.has_permissions(manage_messages=True)
-    async def start_prediction(self, ctx: commands.Context, time_seconds: int, question: str,
-                               believe_answer: str, doubt_answer: str):
-        """
-        Start a new prediction
+    @prediction.command(name="start", description="Start a new prediction")
+    @option("time_seconds", int, description="Duration in seconds (10-3600)", min_value=10, max_value=3600)
+    @option("question", str, description="The prediction question")
+    @option("believe_answer", str, description="The 'believe' (yes) answer")
+    @option("doubt_answer", str, description="The 'doubt' (no) answer")
+    @discord.default_permissions(manage_messages=True)
+    async def start_prediction(
+            self,
+            ctx: discord.ApplicationContext,
+            time_seconds: int,
+            question: str,
+            believe_answer: str,
+            doubt_answer: str
+    ):
+        """Start a new prediction"""
+        await ctx.defer()
 
-        Usage: $start <time_in_seconds> "<question>" "<believe_answer>" "<doubt_answer>"
-        Example: $start 300 "Will it rain today?" "Yes" "No"
-        """
-        # Check if prediction already exists
-        existing = db.get_prediction(ctx.guild.id)
-        if existing:
-            await ctx.send("❌ A prediction is already active in this server!")
-            return
-
-        if time_seconds < 10 or time_seconds > 3600:
-            await ctx.send("❌ Time must be between 10 seconds and 1 hour.")
-            return
+        # Generate unique prediction ID
+        prediction_id = str(uuid.uuid4())[:8]
 
         # Create prediction
         end_time = datetime.now() + timedelta(seconds=time_seconds)
@@ -78,11 +114,12 @@ class Predictions(commands.Cog):
             'end_time': end_time.isoformat(),
             'channel_id': ctx.channel.id,
             'creator_id': ctx.author.id,
-            'closed': False
+            'closed': False,
+            'resolved': False
         }
 
-        db.create_prediction(ctx.guild.id, prediction_data)
-        self.active_timers[ctx.guild.id] = True
+        db.create_prediction(ctx.guild.id, prediction_id, prediction_data)
+        self.active_timers[(ctx.guild.id, prediction_id)] = end_time
 
         embed = discord.Embed(
             title="📊 New Prediction Started!",
@@ -92,52 +129,40 @@ class Predictions(commands.Cog):
         embed.add_field(name="✅ Believe", value=believe_answer, inline=True)
         embed.add_field(name="❌ Doubt", value=doubt_answer, inline=True)
         embed.add_field(name="⏰ Time Remaining", value=format_time(time_seconds), inline=False)
-        embed.set_footer(text="Use $believe <amount> or $doubt <amount> to place your bet!")
+        embed.add_field(name="🆔 Prediction ID", value=f"`{prediction_id}`", inline=False)
+        embed.set_footer(text=f"Use /bet to place your bet! Use ID: {prediction_id}")
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
-    @commands.command(name='believe', aliases=['blv', 'yes'])
-    @commands.guild_only()
-    async def bet_believe(self, ctx: commands.Context, amount: int, streamer: Optional[discord.Member] = None):
-        """
-        Bet on the belief side
+    @discord.slash_command(name="bet", description="Place a bet on an active prediction")
+    @option("prediction_id", str, description="The prediction ID to bet on")
+    @option("side", str, description="Which side to bet on", choices=["believe", "doubt"])
+    @option("amount", int, description="Amount of points to bet", min_value=1)
+    @option("streamer", discord.Member, description="Which streamer's points to use (optional)", required=False)
+    async def place_bet(
+            self,
+            ctx: discord.ApplicationContext,
+            prediction_id: str,
+            side: str,
+            amount: int,
+            streamer: Optional[discord.Member] = None
+    ):
+        """Place a bet on an active prediction"""
+        await ctx.defer(ephemeral=True)
 
-        Usage: $believe <amount> [@streamer]
-        If streamer is not specified, uses your points with the first available streamer
-        """
-        await self._place_bet(ctx, 'believe', amount, streamer)
-
-    @commands.command(name='doubt', aliases=['dbt', 'no'])
-    @commands.guild_only()
-    async def bet_doubt(self, ctx: commands.Context, amount: int, streamer: Optional[discord.Member] = None):
-        """
-        Bet on the doubt side
-
-        Usage: $doubt <amount> [@streamer]
-        If streamer is not specified, uses your points with the first available streamer
-        """
-        await self._place_bet(ctx, 'doubt', amount, streamer)
-
-    @staticmethod
-    async def _place_bet(ctx: commands.Context, side: str, amount: int, streamer: Optional[discord.Member]):
-        """Internal method to handle betting logic"""
-        prediction = db.get_prediction(ctx.guild.id)
+        prediction = db.get_prediction(ctx.guild.id, prediction_id)
         if not prediction:
-            await ctx.send("❌ No active prediction in this server!")
+            await ctx.respond(f"❌ No prediction found with ID `{prediction_id}`!", ephemeral=True)
             return
 
         if prediction.get('closed'):
-            await ctx.send("❌ Betting is closed for this prediction!")
+            await ctx.respond("❌ Betting is closed for this prediction!", ephemeral=True)
             return
 
-        # Check if user already bet
-        existing_bet = db.get_bet(ctx.guild.id, ctx.author.id)
+        # Check if user already bet on this prediction
+        existing_bet = db.get_bet(ctx.guild.id, prediction_id, ctx.author.id)
         if existing_bet:
-            await ctx.send("❌ You've already placed a bet on this prediction!")
-            return
-
-        if amount <= 0:
-            await ctx.send("❌ Bet amount must be positive!")
+            await ctx.respond("❌ You've already placed a bet on this prediction!", ephemeral=True)
             return
 
         # Determine which streamer's points to use
@@ -145,7 +170,7 @@ class Predictions(commands.Cog):
             # Use points from first available streamer
             all_points = db.get_all_user_points(ctx.guild.id, ctx.author.id)
             if not all_points:
-                await ctx.send("❌ You don't have any points yet! Watch some streams first.")
+                await ctx.respond("❌ You don't have any points yet! Watch some streams first.", ephemeral=True)
                 return
 
             # Find streamer with enough points
@@ -156,7 +181,7 @@ class Predictions(commands.Cog):
                     break
 
             if streamer_id is None:
-                await ctx.send(f"❌ You don't have enough points! You need {amount} points.")
+                await ctx.respond(f"❌ You don't have enough points! You need {amount} points.", ephemeral=True)
                 return
         else:
             streamer_id = streamer.id
@@ -164,19 +189,20 @@ class Predictions(commands.Cog):
 
             if user_points < amount:
                 point_name = db.get_streamer_point_name(ctx.guild.id, streamer_id)
-                await ctx.send(
+                await ctx.respond(
                     f"❌ You don't have enough {point_name}! "
-                    f"You have {user_points} but need {amount}."
+                    f"You have {user_points} but need {amount}.",
+                    ephemeral=True
                 )
                 return
 
         # Deduct points and place bet
         current_points = db.get_user_points(ctx.guild.id, ctx.author.id, streamer_id)
         db.set_user_points(ctx.guild.id, ctx.author.id, streamer_id, current_points - amount)
-        db.place_bet(ctx.guild.id, ctx.author.id, side, amount)
+        db.place_bet(ctx.guild.id, prediction_id, ctx.author.id, side, amount)
 
         # Get bet statistics
-        all_bets = db.get_all_bets(ctx.guild.id)
+        all_bets = db.get_all_bets(ctx.guild.id, prediction_id)
         believe_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'believe'}
         doubt_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'doubt'}
 
@@ -195,6 +221,7 @@ class Predictions(commands.Cog):
             description=f"{ctx.author.mention} bet **{amount} {streamer_name}'s {point_name}** on **{side_name}**",
             color=discord.Color.green()
         )
+        embed.add_field(name="🆔 Prediction ID", value=f"`{prediction_id}`", inline=False)
         embed.add_field(
             name="📊 Current Pool",
             value=f"✅ Believe: {believe_pct}% ({len(believe_bets)} bets, {sum(believe_bets.values())} points)\n"
@@ -202,35 +229,35 @@ class Predictions(commands.Cog):
             inline=False
         )
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
-    @commands.command(name='won', aliases=['winner', 'resolve'])
-    @commands.guild_only()
-    @commands.has_permissions(manage_messages=True)
-    async def resolve_prediction(self, ctx: commands.Context, winner: str):
-        """
-        Resolve a prediction and distribute winnings
+    @prediction.command(name="resolve", description="Resolve a prediction and distribute winnings")
+    @option("prediction_id", str, description="The prediction ID to resolve")
+    @option("winner", str, description="Which side won", choices=["believe", "doubt"])
+    @discord.default_permissions(manage_messages=True)
+    async def resolve_prediction(self, ctx: discord.ApplicationContext, prediction_id: str, winner: str):
+        """Resolve a prediction and distribute winnings"""
+        await ctx.defer()
 
-        Usage: $won <believe|doubt>
-        """
-        prediction = db.get_prediction(ctx.guild.id)
+        prediction = db.get_prediction(ctx.guild.id, prediction_id)
         if not prediction:
-            await ctx.send("❌ No active prediction in this server!")
+            await ctx.respond(f"❌ No prediction found with ID `{prediction_id}`!")
             return
 
-        winner = winner.lower()
-        if winner not in ['believe', 'doubt', 'blv', 'dbt']:
-            await ctx.send("❌ Winner must be 'believe' or 'doubt'!")
+        if prediction.get('resolved'):
+            await ctx.respond("❌ This prediction has already been resolved!")
             return
 
-        # Normalize winner
-        winning_side = 'believe' if winner in ['believe', 'blv'] else 'doubt'
+        winning_side = winner
 
         # Get all bets
-        all_bets = db.get_all_bets(ctx.guild.id)
+        all_bets = db.get_all_bets(ctx.guild.id, prediction_id)
         if not all_bets:
-            await ctx.send("❌ No bets were placed on this prediction!")
-            db.delete_prediction(ctx.guild.id)
+            await ctx.respond("❌ No bets were placed on this prediction!")
+            # Mark as resolved
+            prediction['resolved'] = True
+            db.create_prediction(ctx.guild.id, prediction_id, prediction)
+            db.delete_prediction(ctx.guild.id, prediction_id)
             return
 
         # Separate bets by side
@@ -241,18 +268,19 @@ class Predictions(commands.Cog):
         loser_bets = doubt_bets if winning_side == 'believe' else believe_bets
 
         if not winner_bets:
-            await ctx.send("❌ No one bet on the winning side!")
+            await ctx.respond("❌ No one bet on the winning side!")
             # Refund losers
             for user_id, bet_data in all_bets.items():
-                # Find which streamer's points were used (simplified: refund to first streamer)
                 user_points_dict = db.get_all_user_points(ctx.guild.id, user_id)
                 if user_points_dict:
                     streamer_id = list(user_points_dict.keys())[0]
                     current = db.get_user_points(ctx.guild.id, user_id, streamer_id)
                     db.set_user_points(ctx.guild.id, user_id, streamer_id, current + bet_data['amount'])
 
-            db.clear_all_bets(ctx.guild.id)
-            db.delete_prediction(ctx.guild.id)
+            db.clear_all_bets(ctx.guild.id, prediction_id)
+            db.delete_prediction(ctx.guild.id, prediction_id)
+            if (ctx.guild.id, prediction_id) in self.active_timers:
+                del self.active_timers[(ctx.guild.id, prediction_id)]
             return
 
         # Calculate winnings
@@ -260,7 +288,6 @@ class Predictions(commands.Cog):
 
         # Distribute winnings
         for user_id, winning_amount in winnings.items():
-            # Find which streamer's points were used
             user_points_dict = db.get_all_user_points(ctx.guild.id, user_id)
             if user_points_dict:
                 streamer_id = list(user_points_dict.keys())[0]
@@ -282,6 +309,7 @@ class Predictions(commands.Cog):
             description=f"**{prediction['question']}**\n\n**Winner:** {winning_answer}",
             color=discord.Color.gold()
         )
+        embed.add_field(name="🆔 Prediction ID", value=f"`{prediction_id}`", inline=False)
         embed.add_field(
             name="📊 Final Pool",
             value=f"✅ Believe: {believe_pct}% ({len(believe_bets)} bets, {sum(believe_bets.values())} points)\n"
@@ -294,32 +322,29 @@ class Predictions(commands.Cog):
             inline=False
         )
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
         # Cleanup
-        db.clear_all_bets(ctx.guild.id)
-        db.delete_prediction(ctx.guild.id)
-        if ctx.guild.id in self.active_timers:
-            del self.active_timers[ctx.guild.id]
+        db.clear_all_bets(ctx.guild.id, prediction_id)
+        db.delete_prediction(ctx.guild.id, prediction_id)
+        if (ctx.guild.id, prediction_id) in self.active_timers:
+            del self.active_timers[(ctx.guild.id, prediction_id)]
 
-    @commands.command(name='refund', aliases=['cancel'])
-    @commands.guild_only()
-    @commands.has_permissions(manage_messages=True)
-    async def refund_prediction(self, ctx: commands.Context):
-        """
-        Cancel the prediction and refund all bets
+    @prediction.command(name="refund", description="Cancel a prediction and refund all bets")
+    @option("prediction_id", str, description="The prediction ID to refund")
+    @discord.default_permissions(manage_messages=True)
+    async def refund_prediction(self, ctx: discord.ApplicationContext, prediction_id: str):
+        """Cancel the prediction and refund all bets"""
+        await ctx.defer()
 
-        Usage: $refund
-        """
-        prediction = db.get_prediction(ctx.guild.id)
+        prediction = db.get_prediction(ctx.guild.id, prediction_id)
         if not prediction:
-            await ctx.send("❌ No active prediction in this server!")
+            await ctx.respond(f"❌ No prediction found with ID `{prediction_id}`!")
             return
 
         # Refund all bets
-        all_bets = db.get_all_bets(ctx.guild.id)
+        all_bets = db.get_all_bets(ctx.guild.id, prediction_id)
         for user_id, bet_data in all_bets.items():
-            # Refund to first available streamer
             user_points_dict = db.get_all_user_points(ctx.guild.id, user_id)
             if user_points_dict:
                 streamer_id = list(user_points_dict.keys())[0]
@@ -327,24 +352,64 @@ class Predictions(commands.Cog):
                 db.set_user_points(ctx.guild.id, user_id, streamer_id, current + bet_data['amount'])
 
         # Cleanup
-        db.clear_all_bets(ctx.guild.id)
-        db.delete_prediction(ctx.guild.id)
-        if ctx.guild.id in self.active_timers:
-            del self.active_timers[ctx.guild.id]
+        db.clear_all_bets(ctx.guild.id, prediction_id)
+        db.delete_prediction(ctx.guild.id, prediction_id)
+        if (ctx.guild.id, prediction_id) in self.active_timers:
+            del self.active_timers[(ctx.guild.id, prediction_id)]
 
-        await ctx.send("✅ Prediction cancelled and all bets refunded!")
+        await ctx.respond(f"✅ Prediction `{prediction_id}` cancelled and all bets refunded!")
 
-    @commands.command(name='prediction', aliases=['pred', 'current'])
-    @commands.guild_only()
-    async def show_prediction(self, ctx: commands.Context):
-        """Show the current active prediction"""
-        prediction = db.get_prediction(ctx.guild.id)
+    @prediction.command(name="list", description="List all active predictions in this server")
+    async def list_predictions(self, ctx: discord.ApplicationContext):
+        """List all active predictions"""
+        await ctx.defer()
+
+        predictions = db.get_all_guild_predictions(ctx.guild.id)
+
+        if not predictions:
+            await ctx.respond("❌ No active predictions in this server!")
+            return
+
+        embed = discord.Embed(
+            title=f"📊 Active Predictions ({len(predictions)})",
+            color=discord.Color.blue()
+        )
+
+        for pred_id, prediction in predictions.items():
+            # Calculate time remaining
+            end_time = datetime.fromisoformat(prediction['end_time'])
+            time_remaining = max(0, int((end_time - datetime.now()).total_seconds()))
+
+            status = "🔒 Closed" if prediction.get('closed') else f"⏰ {format_time(time_remaining)}"
+
+            # Get bet counts
+            all_bets = db.get_all_bets(ctx.guild.id, pred_id)
+            total_bets = len(all_bets)
+            total_points = sum(bet['amount'] for bet in all_bets.values())
+
+            embed.add_field(
+                name=f"ID: `{pred_id}` - {status}",
+                value=f"**{prediction['question']}**\n"
+                      f"✅ {prediction['believe_answer']} vs ❌ {prediction['doubt_answer']}\n"
+                      f"💰 {total_bets} bets, {total_points} points total",
+                inline=False
+            )
+
+        await ctx.respond(embed=embed)
+
+    @prediction.command(name="show", description="Show details of a specific prediction")
+    @option("prediction_id", str, description="The prediction ID to show")
+    async def show_prediction(self, ctx: discord.ApplicationContext, prediction_id: str):
+        """Show a specific prediction"""
+        await ctx.defer()
+
+        prediction = db.get_prediction(ctx.guild.id, prediction_id)
         if not prediction:
-            await ctx.send("❌ No active prediction in this server!")
+            await ctx.respond(f"❌ No prediction found with ID `{prediction_id}`!")
             return
 
         # Get bet statistics
-        all_bets = db.get_all_bets(ctx.guild.id)
+        all_bets = db.get_all_bets(ctx.guild.id, prediction_id)
         believe_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'believe'}
         doubt_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'doubt'}
 
@@ -357,10 +422,11 @@ class Predictions(commands.Cog):
         status = "🔒 Closed" if prediction.get('closed') else f"⏰ {format_time(time_remaining)}"
 
         embed = discord.Embed(
-            title="📊 Current Prediction",
+            title="📊 Prediction Details",
             description=f"**{prediction['question']}**",
             color=discord.Color.blue()
         )
+        embed.add_field(name="🆔 ID", value=f"`{prediction_id}`", inline=False)
         embed.add_field(name="✅ Believe", value=prediction['believe_answer'], inline=True)
         embed.add_field(name="❌ Doubt", value=prediction['doubt_answer'], inline=True)
         embed.add_field(name="Status", value=status, inline=False)
@@ -371,23 +437,32 @@ class Predictions(commands.Cog):
             inline=False
         )
 
-        await ctx.send(embed=embed)
+        # Show if user has bet
+        user_bet = db.get_bet(ctx.guild.id, prediction_id, ctx.author.id)
+        if user_bet:
+            embed.add_field(
+                name="Your Bet",
+                value=f"You bet **{user_bet['amount']}** on **{user_bet['side']}**",
+                inline=False
+            )
 
-    @staticmethod
-    async def close_submissions(channel, guild_id: int):
+        await ctx.respond(embed=embed)
+
+    async def close_submissions(self, channel, guild_id: int, prediction_id: str):
         """Close betting for a prediction"""
-        prediction = db.get_prediction(guild_id)
+        prediction = db.get_prediction(guild_id, prediction_id)
         if not prediction or prediction.get('closed'):
             return
 
         prediction['closed'] = True
-        db.create_prediction(guild_id, prediction)
+        db.create_prediction(guild_id, prediction_id, prediction)
 
         embed = discord.Embed(
             title="🔒 Betting Closed!",
             description=f"**{prediction['question']}**\n\nBetting is now closed. Waiting for resolution...",
             color=discord.Color.orange()
         )
+        embed.add_field(name="🆔 Prediction ID", value=f"`{prediction_id}`", inline=False)
 
         try:
             await channel.send(embed=embed)
@@ -395,5 +470,5 @@ class Predictions(commands.Cog):
             pass
 
 
-async def setup(bot):
-    await bot.add_cog(Predictions(bot))
+def setup(bot):
+    bot.add_cog(Predictions(bot))

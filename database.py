@@ -12,7 +12,8 @@ class Database:
             host=Config.REDIS_HOST,
             port=Config.REDIS_PORT,
             db=Config.REDIS_DB,
-            password=Config.REDIS_PASSWORD
+            password=Config.REDIS_PASSWORD,
+            decode_responses=True
         )
 
     # ==================== User Points ====================
@@ -72,47 +73,63 @@ class Database:
 
     # ==================== Predictions ====================
 
-    def create_prediction(self, guild_id: int, prediction_data: Dict[str, Any]):
-        """Create a new prediction"""
-        key = f"prediction:{guild_id}"
+    def create_prediction(self, guild_id: int, prediction_id: str, prediction_data: Dict[str, Any]):
+        """Create a new prediction with unique ID"""
+        key = f"prediction:{guild_id}:{prediction_id}"
         self.redis.set(key, json.dumps(prediction_data))
+        # Add to active predictions set
+        self.redis.sadd(f"active_predictions:{guild_id}", prediction_id)
 
-    def get_prediction(self, guild_id: int) -> Optional[Dict[str, Any]]:
-        """Get active prediction for a guild"""
-        key = f"prediction:{guild_id}"
+    def get_prediction(self, guild_id: int, prediction_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific prediction"""
+        key = f"prediction:{guild_id}:{prediction_id}"
         data = self.redis.get(key)
         return json.loads(data) if data else None
 
-    def delete_prediction(self, guild_id: int):
-        """Delete a prediction"""
-        key = f"prediction:{guild_id}"
-        self.redis.delete(key)
+    def get_all_guild_predictions(self, guild_id: int) -> Dict[str, Dict[str, Any]]:
+        """Get all active predictions for a guild"""
+        prediction_ids = self.redis.smembers(f"active_predictions:{guild_id}")
+        predictions = {}
+        for pred_id in prediction_ids:
+            prediction = self.get_prediction(guild_id, pred_id)
+            if prediction:
+                predictions[pred_id] = prediction
+        return predictions
 
-    def get_all_active_predictions(self) -> List[int]:
-        """Get all guild IDs with active predictions"""
-        guild_ids = []
-        for key in self.redis.scan_iter(match="prediction:*"):
+    def delete_prediction(self, guild_id: int, prediction_id: str):
+        """Delete a prediction"""
+        key = f"prediction:{guild_id}:{prediction_id}"
+        self.redis.delete(key)
+        # Remove from active predictions set
+        self.redis.srem(f"active_predictions:{guild_id}", prediction_id)
+
+    def get_all_active_predictions(self) -> Dict[int, List[str]]:
+        """Get all guild IDs with their active prediction IDs"""
+        guilds_predictions = {}
+        for key in self.redis.scan_iter(match="active_predictions:*"):
             guild_id = int(key.split(":")[1])
-            guild_ids.append(guild_id)
-        return guild_ids
+            prediction_ids = list(self.redis.smembers(key))
+            if prediction_ids:
+                guilds_predictions[guild_id] = prediction_ids
+        return guilds_predictions
 
     # ==================== Prediction Bets ====================
 
-    def place_bet(self, guild_id: int, user_id: int, side: str, amount: int):
-        """Place a bet on a prediction"""
-        key = f"bet:{guild_id}:{user_id}"
+    def place_bet(self, guild_id: int, prediction_id: str, user_id: int, side: str, amount: int):
+        """Place a bet on a specific prediction"""
+        key = f"bet:{guild_id}:{prediction_id}:{user_id}"
         bet_data = {"side": side, "amount": amount}
         self.redis.set(key, json.dumps(bet_data))
 
-    def get_bet(self, guild_id: int, user_id: int) -> Optional[Dict[str, Any]]:
-        """Get user's bet for a prediction"""
-        key = f"bet:{guild_id}:{user_id}"
+    def get_bet(self, guild_id: int, prediction_id: str, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get user's bet for a specific prediction"""
+        key = f"bet:{guild_id}:{prediction_id}:{user_id}"
         data = self.redis.get(key)
         return json.loads(data) if data else None
 
-    def get_all_bets(self, guild_id: int) -> Dict[int, Dict[str, Any]]:
-        """Get all bets for a guild's prediction"""
-        pattern = f"bet:{guild_id}:*"
+    def get_all_bets(self, guild_id: int, prediction_id: str) -> Dict[int, Dict[str, Any]]:
+        """Get all bets for a specific prediction"""
+        pattern = f"bet:{guild_id}:{prediction_id}:*"
         bets = {}
 
         for key in self.redis.scan_iter(match=pattern):
@@ -122,9 +139,9 @@ class Database:
 
         return bets
 
-    def clear_all_bets(self, guild_id: int):
-        """Clear all bets for a guild"""
-        pattern = f"bet:{guild_id}:*"
+    def clear_all_bets(self, guild_id: int, prediction_id: str):
+        """Clear all bets for a specific prediction"""
+        pattern = f"bet:{guild_id}:{prediction_id}:*"
         for key in self.redis.scan_iter(match=pattern):
             self.redis.delete(key)
 

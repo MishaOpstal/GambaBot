@@ -1,28 +1,28 @@
 import discord
-from discord.ext import commands
+from discord.commands import SlashCommandGroup, option
 
 from database import db
 
 
-class Points(commands.Cog):
+class Points(discord.Cog):
     """Cog for managing points and streamer settings"""
 
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name='points', aliases=['pts', 'balance', 'bal'])
-    @commands.guild_only()
-    async def show_points(self, ctx: commands.Context, member: discord.Member = None):
-        """
-        Show your or someone else's points
+    points = SlashCommandGroup("points", "Points and streamer commands")
 
-        Usage: $points [@member]
-        """
+    @points.command(name="show", description="Show your or someone else's points")
+    @option("member", discord.Member, description="Member to check (optional)", required=False)
+    async def show_points(self, ctx: discord.ApplicationContext, member: discord.Member = None):
+        """Show your or someone else's points"""
+        await ctx.defer()
+
         target = member or ctx.author
         all_points = db.get_all_user_points(ctx.guild.id, target.id)
 
         if not all_points:
-            await ctx.send(f"❌ {target.mention} doesn't have any points yet!")
+            await ctx.respond(f"❌ {target.mention} doesn't have any points yet!")
             return
 
         # Format points display
@@ -36,7 +36,7 @@ class Points(commands.Cog):
             lines.append(f"**{streamer.display_name}'s {point_name}**: {points}")
 
         if not lines:
-            await ctx.send(f"❌ {target.mention} doesn't have any points yet!")
+            await ctx.respond(f"❌ {target.mention} doesn't have any points yet!")
             return
 
         embed = discord.Embed(
@@ -45,82 +45,84 @@ class Points(commands.Cog):
             color=discord.Color.green()
         )
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
-    @commands.command(name='setpointname', aliases=['setname', 'pointname'])
-    @commands.guild_only()
-    async def set_point_name(self, ctx: commands.Context, *, name: str):
-        """
-        Set your custom point name (what others earn watching you)
+    @points.command(name="setname", description="Set your custom point name")
+    @option("name", str, description="The name for your points (max 20 characters)")
+    async def set_point_name(self, ctx: discord.ApplicationContext, name: str):
+        """Set your custom point name (what others earn watching you)"""
+        await ctx.defer(ephemeral=True)
 
-        Usage: $setpointname <name>
-        Example: $setpointname cookies
-        """
         if len(name) > 20:
-            await ctx.send("❌ Point name must be 20 characters or less!")
+            await ctx.respond("❌ Point name must be 20 characters or less!", ephemeral=True)
             return
 
         if not name.replace(" ", "").isalnum():
-            await ctx.send("❌ Point name can only contain letters, numbers, and spaces!")
+            await ctx.respond("❌ Point name can only contain letters, numbers, and spaces!", ephemeral=True)
             return
 
         db.set_streamer_point_name(ctx.guild.id, ctx.author.id, name)
 
-        await ctx.send(f"✅ Your point name has been set to **{name}**! "
-                       f"People watching your streams will now earn {name}.")
+        await ctx.respond(
+            f"✅ Your point name has been set to **{name}**! "
+            f"People watching your streams will now earn {name}.",
+            ephemeral=True
+        )
 
-    @commands.command(name='setpointrate', aliases=['setrate', 'rate'])
-    @commands.guild_only()
-    async def set_point_rate(self, ctx: commands.Context, rate: int):
-        """
-        Set how many points viewers earn from watching you per interval
-
-        Usage: $setpointrate <amount>
-        Example: $setpointrate 100
-        """
-        if rate < 1 or rate > 1000:
-            await ctx.send("❌ Rate must be between 1 and 1000!")
-            return
+    @points.command(name="setrate", description="Set how many points viewers earn per interval")
+    @option("rate", int, description="Points per interval (1-1000)", min_value=1, max_value=1000)
+    async def set_point_rate(self, ctx: discord.ApplicationContext, rate: int):
+        """Set how many points viewers earn from watching you per interval"""
+        await ctx.defer(ephemeral=True)
 
         db.set_streamer_earn_rate(ctx.guild.id, ctx.author.id, rate)
 
         point_name = db.get_streamer_point_name(ctx.guild.id, ctx.author.id)
-        await ctx.send(f"✅ Your earning rate has been set to **{rate} {point_name}** per interval!")
+        from config import Config
+        await ctx.respond(
+            f"✅ Your earning rate has been set to **{rate} {point_name}** per {Config.POINTS_EARN_INTERVAL}s!",
+            ephemeral=True
+        )
 
-    @commands.command(name='give', aliases=['givepoints'])
-    @commands.guild_only()
-    @commands.has_permissions(administrator=True)
-    async def give_points(self, ctx: commands.Context, member: discord.Member,
-                          streamer: discord.Member, amount: int):
-        """
-        Give points to a member (Admin only)
-
-        Usage: $give @member @streamer <amount>
-        """
-        if amount <= 0:
-            await ctx.send("❌ Amount must be positive!")
-            return
+    @points.command(name="give", description="Give points to a member (Admin only)")
+    @option("member", discord.Member, description="Member to give points to")
+    @option("streamer", discord.Member, description="Which streamer's points to give")
+    @option("amount", int, description="Amount to give", min_value=1)
+    @discord.default_permissions(administrator=True)
+    async def give_points(
+        self,
+        ctx: discord.ApplicationContext,
+        member: discord.Member,
+        streamer: discord.Member,
+        amount: int
+    ):
+        """Give points to a member (Admin only)"""
+        await ctx.defer(ephemeral=True)
 
         current = db.get_user_points(ctx.guild.id, member.id, streamer.id)
         db.set_user_points(ctx.guild.id, member.id, streamer.id, current + amount)
 
         point_name = db.get_streamer_point_name(ctx.guild.id, streamer.id)
 
-        await ctx.send(f"✅ Gave {member.mention} **{amount} {streamer.display_name}'s {point_name}**!")
+        await ctx.respond(
+            f"✅ Gave {member.mention} **{amount} {streamer.display_name}'s {point_name}**!",
+            ephemeral=True
+        )
 
-    @commands.command(name='take', aliases=['takepoints'])
-    @commands.guild_only()
-    @commands.has_permissions(administrator=True)
-    async def take_points(self, ctx: commands.Context, member: discord.Member,
-                          streamer: discord.Member, amount: int):
-        """
-        Take points from a member (Admin only)
-
-        Usage: $take @member @streamer <amount>
-        """
-        if amount <= 0:
-            await ctx.send("❌ Amount must be positive!")
-            return
+    @points.command(name="take", description="Take points from a member (Admin only)")
+    @option("member", discord.Member, description="Member to take points from")
+    @option("streamer", discord.Member, description="Which streamer's points to take")
+    @option("amount", int, description="Amount to take", min_value=1)
+    @discord.default_permissions(administrator=True)
+    async def take_points(
+        self,
+        ctx: discord.ApplicationContext,
+        member: discord.Member,
+        streamer: discord.Member,
+        amount: int
+    ):
+        """Take points from a member (Admin only)"""
+        await ctx.defer(ephemeral=True)
 
         current = db.get_user_points(ctx.guild.id, member.id, streamer.id)
         new_amount = max(0, current - amount)
@@ -128,17 +130,17 @@ class Points(commands.Cog):
 
         point_name = db.get_streamer_point_name(ctx.guild.id, streamer.id)
 
-        await ctx.send(f"✅ Took **{amount} {streamer.display_name}'s {point_name}** from {member.mention}!")
+        await ctx.respond(
+            f"✅ Took **{amount} {streamer.display_name}'s {point_name}** from {member.mention}!",
+            ephemeral=True
+        )
 
-    @commands.command(name='leaderboard', aliases=['lb', 'top'])
-    @commands.guild_only()
-    async def leaderboard(self, ctx: commands.Context, streamer: discord.Member = None):
-        """
-        Show the points leaderboard
+    @discord.slash_command(name="leaderboard", description="Show the points leaderboard")
+    @option("streamer", discord.Member, description="Show leaderboard for specific streamer (optional)", required=False)
+    async def leaderboard(self, ctx: discord.ApplicationContext, streamer: discord.Member = None):
+        """Show the points leaderboard"""
+        await ctx.defer()
 
-        Usage: $leaderboard [@streamer]
-        If streamer is not specified, shows combined leaderboard
-        """
         if streamer:
             # Show leaderboard for specific streamer
             point_name = db.get_streamer_point_name(ctx.guild.id, streamer.id)
@@ -153,7 +155,7 @@ class Points(commands.Cog):
                     user_points.append((member, points))
 
             if not user_points:
-                await ctx.send(f"❌ No one has {streamer.display_name}'s {point_name} yet!")
+                await ctx.respond(f"❌ No one has {streamer.display_name}'s {point_name} yet!")
                 return
 
             user_points.sort(key=lambda x: x[1], reverse=True)
@@ -170,7 +172,7 @@ class Points(commands.Cog):
                 color=discord.Color.gold()
             )
 
-            await ctx.send(embed=embed)
+            await ctx.respond(embed=embed)
         else:
             # Show combined leaderboard (total points across all streamers)
             user_totals = {}
@@ -184,7 +186,7 @@ class Points(commands.Cog):
                     user_totals[member] = total
 
             if not user_totals:
-                await ctx.send("❌ No one has any points yet!")
+                await ctx.respond("❌ No one has any points yet!")
                 return
 
             sorted_users = sorted(user_totals.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -200,16 +202,14 @@ class Points(commands.Cog):
                 color=discord.Color.gold()
             )
 
-            await ctx.send(embed=embed)
+            await ctx.respond(embed=embed)
 
-    @commands.command(name='streamerinfo', aliases=['sinfo'])
-    @commands.guild_only()
-    async def streamer_info(self, ctx: commands.Context, streamer: discord.Member = None):
-        """
-        Show streamer's point settings
+    @discord.slash_command(name="streamerinfo", description="Show streamer's point settings")
+    @option("streamer", discord.Member, description="Streamer to check (optional)", required=False)
+    async def streamer_info(self, ctx: discord.ApplicationContext, streamer: discord.Member = None):
+        """Show streamer's point settings"""
+        await ctx.defer()
 
-        Usage: $streamerinfo [@streamer]
-        """
         target = streamer or ctx.author
 
         point_name = db.get_streamer_point_name(ctx.guild.id, target.id)
@@ -224,8 +224,8 @@ class Points(commands.Cog):
         embed.add_field(name="Point Name", value=point_name, inline=True)
         embed.add_field(name="Earning Rate", value=f"{earn_rate} per {Config.POINTS_EARN_INTERVAL}s", inline=True)
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
 
-async def setup(bot):
-    await bot.add_cog(Points(bot))
+def setup(bot):
+    bot.add_cog(Points(bot))

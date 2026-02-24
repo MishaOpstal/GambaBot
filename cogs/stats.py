@@ -1,23 +1,24 @@
 import discord
-from discord.ext import commands
+from discord.commands import option
 
 from database import db
 
 
-class Stats(commands.Cog):
+class Stats(discord.Cog):
     """Cog for viewing statistics (works in DMs)"""
 
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name='mystats', aliases=['stats', 'allstats'])
-    async def show_all_stats(self, ctx: commands.Context, page: int = 1):
+    @discord.slash_command(name="mystats", description="Show your stats across all servers (works in DMs!)")
+    @option("page", int, description="Page number (optional)", min_value=1, required=False, default=1)
+    async def show_all_stats(self, ctx: discord.ApplicationContext, page: int = 1):
         """
         Show your stats across all servers (paginated by 10)
         Works in DMs!
-
-        Usage: $mystats [page]
         """
+        await ctx.defer()
+
         # Get all guilds the user is in
         user_guilds = []
         for guild in self.bot.guilds:
@@ -25,7 +26,7 @@ class Stats(commands.Cog):
                 user_guilds.append(guild)
 
         if not user_guilds:
-            await ctx.send("❌ You're not in any servers with this bot!")
+            await ctx.respond("❌ You're not in any servers with this bot!")
             return
 
         # Paginate
@@ -72,20 +73,19 @@ class Stats(commands.Cog):
                 )
 
         if total_pages > 1:
-            embed.set_footer(text=f"Use $mystats {page + 1} to see the next page")
+            embed.set_footer(text=f"Use /mystats page:{page + 1} to see the next page")
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
-    @commands.command(name='serverstats', aliases=['guildstats'])
-    async def show_server_stats(self, ctx: commands.Context, *, server_name: str = None):
+    @discord.slash_command(name="serverstats", description="Show your stats for a specific server (works in DMs!)")
+    @option("server_name", str, description="Server name (required in DMs)", required=False)
+    async def show_server_stats(self, ctx: discord.ApplicationContext, server_name: str = None):
         """
         Show your stats for a specific server
         Works in DMs if you provide server name!
-
-        Usage: $serverstats [server name]
-        If used in a server, shows that server's stats
-        If used in DM, requires server name
         """
+        await ctx.defer()
+
         target_guild = None
 
         if ctx.guild:
@@ -99,17 +99,17 @@ class Stats(commands.Cog):
                     break
 
             if not target_guild:
-                await ctx.send("❌ Server not found or you're not a member of it!")
+                await ctx.respond("❌ Server not found or you're not a member of it!")
                 return
         else:
-            await ctx.send("❌ Please provide a server name when using this command in DMs!")
+            await ctx.respond("❌ Please provide a server name when using this command in DMs!")
             return
 
         # Get user's points in this server
         all_points = db.get_all_user_points(target_guild.id, ctx.author.id)
 
         if not all_points:
-            await ctx.send(f"❌ You don't have any points in **{target_guild.name}** yet!")
+            await ctx.respond(f"❌ You don't have any points in **{target_guild.name}** yet!")
             return
 
         # Format points display
@@ -129,73 +129,75 @@ class Stats(commands.Cog):
         )
         embed.add_field(name="Total Points", value=str(total), inline=False)
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
-    @commands.command(name='activebets', aliases=['bets', 'predictions'])
-    async def show_active_bets(self, ctx: commands.Context):
+    @discord.slash_command(name="activebets", description="Show which servers have active predictions (works in DMs!)")
+    async def show_active_bets(self, ctx: discord.ApplicationContext):
         """
         Show which servers have active predictions
         Works in DMs!
-
-        Usage: $activebets
         """
-        # Get all servers with active predictions
-        active_guild_ids = db.get_all_active_predictions()
+        await ctx.defer()
 
-        if not active_guild_ids:
-            await ctx.send("❌ No active predictions in any server!")
+        # Get all servers with active predictions
+        all_predictions = db.get_all_active_predictions()
+
+        if not all_predictions:
+            await ctx.respond("❌ No active predictions in any server!")
             return
 
         # Filter to only guilds the user is in
-        user_active_guilds = []
-        for guild_id in active_guild_ids:
+        user_active_data = []
+        for guild_id, prediction_ids in all_predictions.items():
             guild = self.bot.get_guild(guild_id)
             if guild and guild.get_member(ctx.author.id):
-                prediction = db.get_prediction(guild_id)
-                user_active_guilds.append((guild, prediction))
+                for pred_id in prediction_ids:
+                    prediction = db.get_prediction(guild_id, pred_id)
+                    if prediction:
+                        user_active_data.append((guild, pred_id, prediction))
 
-        if not user_active_guilds:
-            await ctx.send("❌ No active predictions in your servers!")
+        if not user_active_data:
+            await ctx.respond("❌ No active predictions in your servers!")
             return
 
         embed = discord.Embed(
             title="🎲 Active Predictions",
-            description=f"Predictions in {len(user_active_guilds)} of your servers:",
+            description=f"Found {len(user_active_data)} active predictions in your servers:",
             color=discord.Color.purple()
         )
 
-        for guild, prediction in user_active_guilds:
+        for guild, pred_id, prediction in user_active_data:
             status = "🔒 Closed" if prediction.get('closed') else "✅ Open"
 
             # Check if user has bet
-            user_bet = db.get_bet(guild.id, ctx.author.id)
+            user_bet = db.get_bet(guild.id, pred_id, ctx.author.id)
             bet_status = ""
             if user_bet:
                 bet_status = f"\n*You bet {user_bet['amount']} on {user_bet['side']}*"
 
             embed.add_field(
-                name=f"{guild.name} - {status}",
+                name=f"{guild.name} - {status} (ID: `{pred_id}`)",
                 value=f"**{prediction['question']}**{bet_status}",
                 inline=False
             )
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
-    @commands.command(name='myservers', aliases=['servers'])
-    async def show_servers(self, ctx: commands.Context):
+    @discord.slash_command(name="myservers", description="List all servers you share with the bot (works in DMs!)")
+    async def show_servers(self, ctx: discord.ApplicationContext):
         """
         List all servers you share with the bot
         Works in DMs!
-
-        Usage: $myservers
         """
+        await ctx.defer()
+
         user_guilds = []
         for guild in self.bot.guilds:
             if guild.get_member(ctx.author.id):
                 user_guilds.append(guild)
 
         if not user_guilds:
-            await ctx.send("❌ You're not in any servers with this bot!")
+            await ctx.respond("❌ You're not in any servers with this bot!")
             return
 
         guild_list = "\n".join([f"• **{guild.name}** ({guild.member_count} members)"
@@ -207,8 +209,8 @@ class Stats(commands.Cog):
             color=discord.Color.blue()
         )
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
 
-async def setup(bot):
-    await bot.add_cog(Stats(bot))
+def setup(bot):
+    bot.add_cog(Stats(bot))

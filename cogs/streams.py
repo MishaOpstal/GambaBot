@@ -1,5 +1,6 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import tasks
+from discord.commands import option
 from database import db
 from config import Config
 import logging
@@ -7,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class Streams(commands.Cog):
+class Streams(discord.Cog):
     """Cog for tracking stream viewers and awarding points"""
 
     def __init__(self, bot):
@@ -79,7 +80,7 @@ class Streams(commands.Cog):
             if streamer_id not in current_streamers:
                 db.clear_stream_viewers(guild.id, streamer_id)
 
-    @commands.Cog.listener()
+    @discord.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState,
                                     after: discord.VoiceState):
         """Handle voice channel join/leave events"""
@@ -99,20 +100,18 @@ class Streams(commands.Cog):
                 for streamer_id in db.get_all_active_streams(member.guild.id):
                     db.remove_stream_viewer(member.guild.id, streamer_id, member.id)
 
-    @commands.command(name='viewers', aliases=['watching'])
-    @commands.guild_only()
-    async def show_viewers(self, ctx: commands.Context, streamer: discord.Member = None):
-        """
-        Show who's watching a stream
+    @discord.slash_command(name="viewers", description="Show who's watching a stream")
+    @option("streamer", discord.Member, description="Streamer to check (optional)", required=False)
+    async def show_viewers(self, ctx: discord.ApplicationContext, streamer: discord.Member = None):
+        """Show who's watching a stream"""
+        await ctx.defer()
 
-        Usage: $viewers [@streamer]
-        """
         target = streamer or ctx.author
 
         viewers = db.get_stream_viewers(ctx.guild.id, target.id)
 
         if not viewers:
-            await ctx.send(f"❌ No one is watching {target.display_name}'s stream right now!")
+            await ctx.respond(f"❌ No one is watching {target.display_name}'s stream right now!")
             return
 
         viewer_mentions = []
@@ -122,7 +121,7 @@ class Streams(commands.Cog):
                 viewer_mentions.append(viewer.mention)
 
         if not viewer_mentions:
-            await ctx.send(f"❌ No one is watching {target.display_name}'s stream right now!")
+            await ctx.respond(f"❌ No one is watching {target.display_name}'s stream right now!")
             return
 
         point_name = db.get_streamer_point_name(ctx.guild.id, target.id)
@@ -133,12 +132,13 @@ class Streams(commands.Cog):
             color=discord.Color.purple()
         )
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
-    @commands.command(name='streams', aliases=['live'])
-    @commands.guild_only()
-    async def show_streams(self, ctx: commands.Context):
+    @discord.slash_command(name="streams", description="Show all active streams in the server")
+    async def show_streams(self, ctx: discord.ApplicationContext):
         """Show all active streams in the server"""
+        await ctx.defer()
+
         active_streamers = []
 
         for member in ctx.guild.members:
@@ -158,7 +158,7 @@ class Streams(commands.Cog):
                 active_streamers.append((member, len(viewers), point_name))
 
         if not active_streamers:
-            await ctx.send("❌ No one is streaming right now!")
+            await ctx.respond("❌ No one is streaming right now!")
             return
 
         lines = []
@@ -174,8 +174,8 @@ class Streams(commands.Cog):
             color=discord.Color.red()
         )
 
-        await ctx.send(embed=embed)
+        await ctx.respond(embed=embed)
 
 
-async def setup(bot):
-    await bot.add_cog(Streams(bot))
+def setup(bot):
+    bot.add_cog(Streams(bot))
