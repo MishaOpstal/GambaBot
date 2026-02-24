@@ -626,16 +626,6 @@ VISUAL_TEMPLATE = """
     </script>
 </head>
 <body>
-    {% if single_prediction %}
-        {{ render_prediction(single_prediction, prediction_ids[0]) }}
-    {% else %}
-        {% for pred_id, prediction in predictions.items() %}
-            {{ render_prediction(prediction, pred_id) }}
-        {% endfor %}
-    {% endif %}
-</body>
-</html>
-
 {% macro render_prediction(prediction, pred_id) %}
 <div class="prediction-card">
     <div class="prediction-id">ID: {{ pred_id }}</div>
@@ -694,6 +684,16 @@ VISUAL_TEMPLATE = """
     {% endif %}
 </div>
 {% endmacro %}
+
+    {% if single_prediction %}
+        {{ render_prediction(single_prediction, prediction_ids[0]) }}
+    {% else %}
+        {% for pred_id, prediction in predictions.items() %}
+            {{ render_prediction(prediction, pred_id) }}
+        {% endfor %}
+    {% endif %}
+</body>
+</html>
 """
 
 
