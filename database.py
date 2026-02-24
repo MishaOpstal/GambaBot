@@ -13,7 +13,7 @@ class Database:
             port=Config.REDIS_PORT,
             db=Config.REDIS_DB,
             password=Config.REDIS_PASSWORD,
-            decode_responses=True
+            decode_responses=True  # Automatically decode bytes to strings
         )
 
     # ==================== User Points ====================
@@ -190,6 +190,31 @@ class Database:
             return self.redis.ping()
         except:
             return False
+
+    # ==================== Auth Tokens ====================
+
+    def generate_auth_token(self, guild_id: int, user_id: int) -> str:
+        """Generate a new auth token for a user in a specific guild"""
+        import secrets
+        token = secrets.token_urlsafe(32)
+        key = f"auth_token:{guild_id}:{user_id}"
+        self.redis.set(key, token)
+        # Also store reverse lookup
+        self.redis.set(f"token_lookup:{token}", f"{guild_id}:{user_id}")
+        return token
+
+    def get_auth_token(self, guild_id: int, user_id: int) -> Optional[str]:
+        """Get the auth token for a user in a specific guild"""
+        key = f"auth_token:{guild_id}:{user_id}"
+        return self.redis.get(key)
+
+    def verify_auth_token(self, token: str) -> Optional[tuple]:
+        """Verify an auth token and return (guild_id, user_id) if valid"""
+        lookup = self.redis.get(f"token_lookup:{token}")
+        if lookup:
+            parts = lookup.split(":")
+            return (int(parts[0]), int(parts[1]))
+        return None
 
 
 # Global database instance

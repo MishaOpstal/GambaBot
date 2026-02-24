@@ -87,6 +87,15 @@ def main():
         except Exception as e:
             logger.error(f"Failed to load cog {cog}: {e}")
 
+    # Start web server in separate thread
+    from web_server import init_web_server, run_web_server
+    import threading
+
+    init_web_server(bot)
+    web_thread = threading.Thread(target=run_web_server, kwargs={'host': '0.0.0.0', 'port': 5000}, daemon=True)
+    web_thread.start()
+    logger.info("Web server started on http://0.0.0.0:5000")
+
     try:
         bot.run(Config.DISCORD_TOKEN)
     except KeyboardInterrupt:

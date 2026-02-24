@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 COPY bot.py .
 COPY config.py .
 COPY database.py .
+COPY web_server.py .
 COPY cogs ./cogs
 COPY helpers ./helpers
 
