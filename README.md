@@ -59,9 +59,13 @@ Edit `.env` to customize bot settings:
 - `DISCORD_TOKEN`: Your Discord bot token (required)
 - `REDIS_HOST`: Redis hostname (default: redis)
 - `REDIS_PORT`: Redis port (default: 6379)
-- `POINTS_EARN_INTERVAL`: How often points are awarded in seconds (default: 300 = 5 minutes)
+- `DOMAIN`: The public URL where the web UI is hosted (default: http://localhost:5000)
+- `PORT`: The port the web server runs on (default: 5000)
+- `DEFAULT_POINTS_EARN_INTERVAL`: How often points are awarded in seconds (default: 300 = 5 minutes)
 - `DEFAULT_POINTS_EARN_RATE`: Default points earned per interval (default: 50)
 - `DEFAULT_STARTING_POINTS`: Starting points for new users (default: 1000)
+
+All of these can also be set directly in `docker-compose.yml` under the `environment` section.
 
 ### Discord Bot Permissions
 
@@ -88,7 +92,8 @@ All commands use Discord's native **slash commands** (/) interface. Start typing
 
 #### Admin Commands
 - `/prediction start` - Start a new prediction
-  - Example: `/prediction start time_seconds:300 question:"Will it rain?" believe_answer:"Yes" doubt_answer:"No"`
+  - Example: `/prediction start streamer:@username time_seconds:300 question:"Will it rain?" believe_answer:"Yes" doubt_answer:"No"`
+  - If no parameters are provided, an interactive setup will guide you.
 - `/prediction resolve` - Resolve prediction and distribute winnings
   - Choose `winner:believe` or `winner:doubt`
 - `/prediction refund` - Cancel prediction and refund all bets
@@ -96,8 +101,8 @@ All commands use Discord's native **slash commands** (/) interface. Start typing
 
 #### User Commands
 - `/bet` - Place a bet on the active prediction
-  - Example: `/bet side:believe amount:100`
-  - Optional: Specify which streamer's points to use with `streamer:@username`
+  - Opens an interactive menu to choose a prediction, side, and amount.
+- `/prediction manage` - Manage your active predictions (Resolve, Refund, Show)
 
 ### Points Commands
 
@@ -108,6 +113,8 @@ All commands use Discord's native **slash commands** (/) interface. Start typing
   - Example: `/points setname name:cookies`
 - `/points setrate` - Set your points earning rate
   - Example: `/points setrate rate:100`
+- `/points setinterval` - Set your points earning interval
+  - Example: `/points setinterval interval:60`
 - `/leaderboard` - Show points leaderboard
   - Optional: Show for specific streamer with `streamer:@username`
 - `/streamerinfo` - Show streamer's settings
@@ -140,7 +147,7 @@ All commands use Discord's native **slash commands** (/) interface. Start typing
 
 1. When a user starts streaming on Discord (shows as "Live" with purple status)
 2. Other users in the same voice channel earn points automatically
-3. Points are awarded every `POINTS_EARN_INTERVAL` seconds (default: 5 minutes)
+3. Points are awarded based on each streamer's custom interval (default: 5 minutes)
 4. Each streamer has their own point currency with a custom name
 5. Users accumulate different point types from different streamers
 
@@ -198,7 +205,7 @@ Example:
 
 ### Points not being awarded
 - Check Redis connection: `docker-compose logs redis`
-- Verify `POINTS_EARN_INTERVAL` in `.env`
+- Verify `DEFAULT_POINTS_EARN_INTERVAL` in `.env`
 - Ensure viewers are in the same voice channel as streamer
 
 ### Slash commands not showing up

@@ -71,6 +71,64 @@ class Database:
         key = f"streamer:{guild_id}:{streamer_id}:earn_rate"
         self.redis.set(key, rate)
 
+    def get_streamer_earn_interval(self, guild_id: int, streamer_id: int) -> int:
+        """Get the points earning interval for a streamer"""
+        key = f"streamer:{guild_id}:{streamer_id}:earn_interval"
+        interval = self.redis.get(key)
+        return int(interval) if interval else Config.DEFAULT_POINTS_EARN_INTERVAL
+
+    def set_streamer_earn_interval(self, guild_id: int, streamer_id: int, interval: int):
+        """Set the points earning interval for a streamer"""
+        key = f"streamer:{guild_id}:{streamer_id}:earn_interval"
+        self.redis.set(key, interval)
+
+    def get_last_award_time(self, guild_id: int, streamer_id: int) -> int:
+        """Get the last time points were awarded for a streamer"""
+        key = f"streamer:{guild_id}:{streamer_id}:last_award"
+        last_award = self.redis.get(key)
+        return int(last_award) if last_award else 0
+
+    def set_last_award_time(self, guild_id: int, streamer_id: int, timestamp: int):
+        """Set the last time points were awarded for a streamer"""
+        key = f"streamer:{guild_id}:{streamer_id}:last_award"
+        self.redis.set(key, timestamp)
+
+    # ==================== Prediction Managers ====================
+
+    def add_prediction_manager(self, guild_id: int, streamer_id: int, manager_id: int):
+        """Allow a user to manage predictions for a streamer"""
+        key = f"prediction_managers:{guild_id}:{streamer_id}"
+        self.redis.sadd(key, manager_id)
+        # Also maintain a reverse mapping for easier lookup of which streamers a user manages
+        reverse_key = f"managed_streamers:{guild_id}:{manager_id}"
+        self.redis.sadd(reverse_key, streamer_id)
+
+    def remove_prediction_manager(self, guild_id: int, streamer_id: int, manager_id: int):
+        """Remove a user's ability to manage predictions for a streamer"""
+        key = f"prediction_managers:{guild_id}:{streamer_id}"
+        self.redis.srem(key, manager_id)
+        reverse_key = f"managed_streamers:{guild_id}:{manager_id}"
+        self.redis.srem(reverse_key, streamer_id)
+
+    def get_prediction_managers(self, guild_id: int, streamer_id: int) -> List[int]:
+        """Get all users allowed to manage predictions for a streamer"""
+        key = f"prediction_managers:{guild_id}:{streamer_id}"
+        managers = self.redis.smembers(key)
+        return [int(m) for m in managers]
+
+    def get_managed_streamers(self, guild_id: int, manager_id: int) -> List[int]:
+        """Get all streamers a user is allowed to manage predictions for"""
+        key = f"managed_streamers:{guild_id}:{manager_id}"
+        streamers = self.redis.smembers(key)
+        return [int(s) for s in streamers]
+
+    def is_prediction_manager(self, guild_id: int, streamer_id: int, manager_id: int) -> bool:
+        """Check if a user is allowed to manage predictions for a streamer"""
+        if streamer_id == manager_id:
+            return True
+        key = f"prediction_managers:{guild_id}:{streamer_id}"
+        return self.redis.sismember(key, manager_id)
+
     # ==================== Predictions ====================
 
     def create_prediction(self, guild_id: int, prediction_id: str, prediction_data: Dict[str, Any]):
@@ -181,6 +239,26 @@ class Database:
                     streamer_ids.append(streamer_id)
 
         return streamer_ids
+
+    def get_all_known_streamers(self, guild_id: int) -> List[int]:
+        """Get all users who have any streamer-related settings in a guild"""
+        streamer_ids = set()
+        # Scan for point names
+        for key in self.redis.scan_iter(match=f"streamer:{guild_id}:*:point_name"):
+            parts = key.split(":")
+            if len(parts) >= 3:
+                streamer_ids.add(int(parts[2]))
+        # Scan for earn rates
+        for key in self.redis.scan_iter(match=f"streamer:{guild_id}:*:earn_rate"):
+            parts = key.split(":")
+            if len(parts) >= 3:
+                streamer_ids.add(int(parts[2]))
+        # Scan for managers
+        for key in self.redis.scan_iter(match=f"prediction_managers:{guild_id}:*"):
+            parts = key.split(":")
+            if len(parts) >= 2:
+                streamer_ids.add(int(parts[2]))
+        return list(streamer_ids)
 
     # ==================== Utility ====================
 

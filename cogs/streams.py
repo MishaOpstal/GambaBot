@@ -18,12 +18,14 @@ class Streams(discord.Cog):
     def cog_unload(self):
         self.award_points.cancel()
 
-    @tasks.loop(seconds=Config.POINTS_EARN_INTERVAL)
+    @tasks.loop(seconds=60)
     async def award_points(self):
         """Award points to viewers at regular intervals"""
+        import time
+        now = int(time.time())
         for guild in self.bot.guilds:
             try:
-                await self._award_points_for_guild(guild)
+                await self._award_points_for_guild(guild, now)
             except Exception as e:
                 logger.error(f"Error awarding points in guild {guild.id}: {e}")
 
@@ -32,7 +34,7 @@ class Streams(discord.Cog):
         await self.bot.wait_until_ready()
 
     @staticmethod
-    async def _award_points_for_guild(guild: discord.Guild):
+    async def _award_points_for_guild(guild: discord.Guild, now: int):
         """Award points to all viewers in a guild"""
         # Track current streamers
         current_streamers = set()
@@ -53,11 +55,19 @@ class Streams(discord.Cog):
             if is_streaming:
                 current_streamers.add(member.id)
 
+                # Check if it's time to award points for this streamer
+                last_award = db.get_last_award_time(guild.id, member.id)
+                interval = db.get_streamer_earn_interval(guild.id, member.id)
+
+                if now - last_award < interval:
+                    continue
+
                 # Check voice channels for viewers
                 if member.voice and member.voice.channel:
                     channel = member.voice.channel
 
                     # Award points to all other members in the channel
+                    awarded = False
                     for viewer in channel.members:
                         if viewer.id == member.id or viewer.bot:
                             continue
@@ -68,11 +78,15 @@ class Streams(discord.Cog):
                         # Award points
                         earn_rate = db.get_streamer_earn_rate(guild.id, member.id)
                         db.add_user_points(guild.id, viewer.id, member.id, earn_rate)
+                        awarded = True
 
                         logger.debug(
                             f"Awarded {earn_rate} points to {viewer.id} "
                             f"for watching {member.id} in {guild.id}"
                         )
+                    
+                    if awarded:
+                        db.set_last_award_time(guild.id, member.id, now)
 
         # Clean up viewers for streamers who stopped streaming
         active_streams = db.get_all_active_streams(guild.id)

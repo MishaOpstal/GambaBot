@@ -3,6 +3,7 @@ from flask_sock import Sock
 from datetime import datetime
 import json
 import time
+import asyncio
 from database import db
 import discord
 
@@ -27,6 +28,7 @@ LANDING_PAGE = """
     <title>Prediction Bot - Web UI</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
         * {
             margin: 0;
@@ -198,6 +200,7 @@ GUILD_TOKEN_PAGE = """
     <title>Enter Token - {{ guild_name }}</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
         * {
             margin: 0;
@@ -355,6 +358,7 @@ ERROR_PAGE = """
     <title>{{ error_code }} - Error</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
         * {
             margin: 0;
@@ -442,6 +446,7 @@ VISUAL_TEMPLATE = """
     <title>Predictions - {{guild_name}}</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
         * {
             margin: 0;
@@ -604,6 +609,114 @@ VISUAL_TEMPLATE = """
             text-align: center;
             margin-top: 10px;
         }
+
+        /* Management UI Styles */
+        .management-container {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+            color: #333;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .management-title {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 5px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .submit-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.3s;
+        }
+
+        .submit-btn:hover {
+            background: #764ba2;
+        }
+
+        .bet-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .bet-btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            color: white;
+        }
+
+        .believe-btn { background-color: #4A90E2; }
+        .believe-btn:hover { background-color: #357ABD; }
+        .doubt-btn { background-color: #E24A90; }
+        .doubt-btn:hover { background-color: #BD3576; }
+
+        .manage-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #667eea;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 30px;
+            text-decoration: none;
+            font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+
+        .overlay-bg {
+            background-color: transparent !important;
+        }
+        
+        #message-box {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px 30px;
+            border-radius: 10px;
+            color: white;
+            font-weight: bold;
+            z-index: 2000;
+            display: none;
+        }
+        .success { background-color: #2ecc71; }
+        .error { background-color: #e74c3c; }
     </style>
     <script>
         function updateTimers() {
@@ -677,6 +790,16 @@ VISUAL_TEMPLATE = """
             const pName = document.getElementById(`point-name-${id}`);
             if (pName) pName.textContent = `Currency: ${pred.point_name}`;
 
+            // Update management UI visibility
+            const mgmt = document.getElementById(`mgmt-${id}`);
+            if (mgmt) {
+                if (pred.closed || pred.finished) {
+                    mgmt.style.display = 'none';
+                } else {
+                    mgmt.style.display = 'block';
+                }
+            }
+
             // Update timer
             const timer = document.getElementById(`timer-${id}`);
             if (timer) {
@@ -731,12 +854,117 @@ VISUAL_TEMPLATE = """
             updateTimers();
             connectWS();
         };
+
+        async function submitForm(url, data, successMsg) {
+            const msgBox = document.getElementById('message-box');
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                
+                msgBox.textContent = result.success ? successMsg : (result.error || 'Something went wrong');
+                msgBox.className = result.success ? 'success' : 'error';
+                msgBox.style.display = 'block';
+                
+                if (result.success) {
+                    if (data.prediction_id) {
+                        // Clear bet amount after success
+                        const amtInput = document.getElementById(`amount-${data.prediction_id}`);
+                        if (amtInput) amtInput.value = '';
+                    } else {
+                        // Redirect or refresh after starting prediction
+                        setTimeout(() => window.location.reload(), 1500);
+                    }
+                }
+            } catch (err) {
+                msgBox.textContent = 'Network error occurred';
+                msgBox.className = 'error';
+                msgBox.style.display = 'block';
+            }
+            setTimeout(() => { msgBox.style.display = 'none'; }, 3000);
+        }
+
+        function placeBet(predId, side) {
+            const amount = document.getElementById(`amount-${predId}`).value;
+            if (!amount || amount <= 0) {
+                alert('Please enter a valid amount');
+                return;
+            }
+            submitForm(`/api/{{guild_id}}/{{token}}/bet/place`, {
+                prediction_id: predId,
+                side: side,
+                amount: parseInt(amount)
+            }, 'Bet placed successfully!');
+        }
     </script>
 </head>
-<body>
-{% macro render_prediction(prediction, pred_id) %}
+<body class="{% if not manage %}overlay-bg{% endif %}">
+    <div id="message-box"></div>
+    
+    {% if manage %}
+        <a href="?manage=0" class="manage-toggle">📺 Overlay Mode</a>
+        
+        {% if not single_prediction and eligible_streamers %}
+        <div class="management-container" style="max-width: 800px; margin: 0 auto 30px auto;">
+            <div class="management-title">➕ Start New Prediction</div>
+            <form onsubmit="event.preventDefault(); submitForm('/api/{{guild_id}}/{{token}}/prediction/start', {
+                streamer_id: document.getElementById('new-streamer').value,
+                channel_id: document.getElementById('new-channel').value,
+                question: document.getElementById('new-question').value,
+                believe_answer: document.getElementById('new-believe').value,
+                doubt_answer: document.getElementById('new-doubt').value,
+                time_seconds: document.getElementById('new-time').value
+            }, 'Prediction started!');">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="form-group">
+                        <label>Streamer:</label>
+                        <select id="new-streamer">
+                            {% for s in eligible_streamers %}
+                            <option value="{{ s.id }}">{{ s.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Post to Channel:</label>
+                        <select id="new-channel">
+                            {% for c in channels %}
+                            <option value="{{ c.id }}">#{{ c.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Question:</label>
+                    <input type="text" id="new-question" placeholder="e.g. Will we win this game?" required>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                    <div class="form-group">
+                        <label>Believe Answer:</label>
+                        <input type="text" id="new-believe" value="Believe">
+                    </div>
+                    <div class="form-group">
+                        <label>Doubt Answer:</label>
+                        <input type="text" id="new-doubt" value="Doubt">
+                    </div>
+                    <div class="form-group">
+                        <label>Duration (sec):</label>
+                        <input type="number" id="new-time" value="300" min="10" max="3600">
+                    </div>
+                </div>
+                <button type="submit" class="submit-btn">🚀 Start Prediction</button>
+            </form>
+        </div>
+        {% endif %}
+    {% else %}
+        <a href="?manage=1" class="manage-toggle">⚙️ Interactive Mode</a>
+    {% endif %}
+
+    {% macro render_prediction(prediction, pred_id) %}
 <div class="prediction-card" id="card-{{ pred_id }}">
-    <div class="prediction-id">ID: {{ pred_id }}</div>
+    <div class="prediction-id"><a href="/{{ guild_id }}/{{ token }}/{{ pred_id }}{% if manage %}?manage=1{% endif %}" style="color: #888; text-decoration: none;">ID: {{ pred_id }}</a></div>
 
     <div id="closed-container-{{ pred_id }}" style="text-align: center;">
     {% if prediction.closed %}
@@ -785,6 +1013,20 @@ VISUAL_TEMPLATE = """
 
     <div class="point-name" id="point-name-{{ pred_id }}">Currency: {{ prediction.point_name }}</div>
 
+    {% if manage %}
+    <div class="management-container" id="mgmt-{{ pred_id }}" style="{% if prediction.closed or prediction.finished %}display: none;{% endif %}">
+        <div class="management-title">💸 Place a Bet</div>
+        <div class="form-group">
+            <label>Amount:</label>
+            <input type="number" id="amount-{{ pred_id }}" placeholder="Enter amount..." min="1">
+        </div>
+        <div class="bet-buttons">
+            <button class="bet-btn believe-btn" onclick="placeBet('{{ pred_id }}', 'believe')">✅ {{ prediction.believe_answer }}</button>
+            <button class="bet-btn doubt-btn" onclick="placeBet('{{ pred_id }}', 'doubt')">❌ {{ prediction.doubt_answer }}</button>
+        </div>
+    </div>
+    {% endif %}
+
     <div class="timer" id="timer-{{ pred_id }}" data-end-time="{{ prediction.ending_timestamp }}" style="{% if prediction.closed %}display: none;{% endif %}">
         ⏰ Calculating...
     </div>
@@ -792,6 +1034,7 @@ VISUAL_TEMPLATE = """
 {% endmacro %}
 
     {% if single_prediction %}
+        <a href="/{{ guild_id }}/{{ token }}{% if manage %}?manage=1{% endif %}" style="display: block; margin-bottom: 20px; color: #667eea; text-decoration: none; font-weight: bold; background: white; padding: 10px; border-radius: 10px; text-align: center;">← Back to All Predictions</a>
         {{ render_prediction(single_prediction, prediction_ids[0]) }}
     {% else %}
         {% for pred_id, prediction in predictions.items() %}
@@ -912,6 +1155,14 @@ def internal_error(e):
 def landing_page():
     """Main landing page with instructions"""
     return render_template_string(LANDING_PAGE)
+
+
+@app.route('/favicon.ico')
+def favicon():
+    """Favicon redirect to bot's avatar"""
+    if bot_instance and bot_instance.user:
+        return redirect(bot_instance.user.display_avatar.url)
+    return abort(404)
 
 
 @app.route('/<int:guild_id>', methods=['GET'])
@@ -1037,10 +1288,27 @@ def visual_all_predictions(guild_id, token):
 
     data = get_prediction_data(guild_id, user_id)
     if data is None:
-        abort(404)
+        data = {}
 
     guild = bot_instance.get_guild(guild_id)
     guild_name = guild.name if guild else f"Guild {guild_id}"
+
+    # Get management data
+    manage = request.args.get('manage') == '1'
+    eligible_streamers = []
+    channels = []
+    user_points = {}
+    
+    if manage:
+        predictions_cog = bot_instance.get_cog('Predictions')
+        if predictions_cog:
+            member = guild.get_member(user_id)
+            if member:
+                eligible = predictions_cog.get_eligible_streamers(guild, member)
+                eligible_streamers = [{"id": s.id, "name": s.display_name} for s in eligible]
+        
+        channels = [{"id": c.id, "name": c.name} for c in guild.text_channels]
+        user_points = db.get_all_user_points(guild_id, user_id)
 
     return render_template_string(
         VISUAL_TEMPLATE,
@@ -1049,7 +1317,11 @@ def visual_all_predictions(guild_id, token):
         guild_name=guild_name,
         single_prediction=False,
         guild_id=guild_id,
-        token=token
+        token=token,
+        manage=manage,
+        eligible_streamers=eligible_streamers,
+        channels=channels,
+        user_points=user_points
     )
 
 
@@ -1070,6 +1342,23 @@ def visual_single_prediction(guild_id, token, prediction_id):
     guild = bot_instance.get_guild(guild_id)
     guild_name = guild.name if guild else f"Guild {guild_id}"
 
+    # Get management data
+    manage = request.args.get('manage') == '1'
+    eligible_streamers = []
+    channels = []
+    user_points = {}
+    
+    if manage:
+        predictions_cog = bot_instance.get_cog('Predictions')
+        if predictions_cog:
+            member = guild.get_member(user_id)
+            if member:
+                eligible = predictions_cog.get_eligible_streamers(guild, member)
+                eligible_streamers = [{"id": s.id, "name": s.display_name} for s in eligible]
+        
+        channels = [{"id": c.id, "name": c.name} for c in guild.text_channels]
+        user_points = db.get_all_user_points(guild_id, user_id)
+
     return render_template_string(
         VISUAL_TEMPLATE,
         single_prediction=data[prediction_id],
@@ -1077,8 +1366,137 @@ def visual_single_prediction(guild_id, token, prediction_id):
         guild_name=guild_name,
         guild_id=guild_id,
         token=token,
-        prediction_id=prediction_id
+        prediction_id=prediction_id,
+        manage=manage,
+        eligible_streamers=eligible_streamers,
+        channels=channels,
+        user_points=user_points
     )
+
+
+@app.route('/api/<int:guild_id>/<token>/prediction/start', methods=['POST'])
+def api_start_prediction(guild_id, token):
+    """API endpoint to start a new prediction"""
+    # Verify token
+    result = db.verify_auth_token(token)
+    if not result or result[0] != guild_id:
+        abort(403)
+
+    user_id = result[1]
+    
+    # Get data from JSON or Form
+    if request.is_json:
+        data = request.json
+    else:
+        data = request.form
+
+    streamer_id = data.get('streamer_id')
+    channel_id = data.get('channel_id')
+    question = data.get('question')
+    believe_answer = data.get('believe_answer', 'Believe')
+    doubt_answer = data.get('doubt_answer', 'Doubt')
+    time_seconds = data.get('time_seconds', 300)
+
+    if not all([streamer_id, channel_id, question]):
+        return jsonify({"error": "Missing required fields (streamer_id, channel_id, question)"}), 400
+
+    try:
+        streamer_id = int(streamer_id)
+        channel_id = int(channel_id)
+        time_seconds = int(time_seconds)
+    except ValueError:
+        return jsonify({"error": "Invalid numeric format"}), 400
+
+    if not (10 <= time_seconds <= 3600):
+        return jsonify({"error": "Time must be between 10 and 3600 seconds"}), 400
+
+    guild = bot_instance.get_guild(guild_id)
+    if not guild:
+        return jsonify({"error": "Guild not found"}), 404
+
+    user = guild.get_member(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    predictions_cog = bot_instance.get_cog('Predictions')
+    if not predictions_cog:
+        return jsonify({"error": "Predictions cog not loaded"}), 500
+
+    # Check eligibility
+    eligible = predictions_cog.get_eligible_streamers(guild, user)
+    if streamer_id not in [s.id for s in eligible]:
+        return jsonify({"error": "You don't have permission to start predictions for this streamer"}), 403
+
+    # Call the cog method in the event loop
+    future = asyncio.run_coroutine_threadsafe(
+        predictions_cog.do_start_prediction(
+            guild_id, channel_id, user_id, streamer_id, 
+            time_seconds, question, believe_answer, doubt_answer
+        ),
+        bot_instance.loop
+    )
+    
+    try:
+        prediction_id = future.result(timeout=10)
+        return jsonify({"success": True, "prediction_id": prediction_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/<int:guild_id>/<token>/bet/place', methods=['POST'])
+def api_place_bet(guild_id, token):
+    """API endpoint to place a bet"""
+    # Verify token
+    result = db.verify_auth_token(token)
+    if not result or result[0] != guild_id:
+        abort(403)
+
+    user_id = result[1]
+    
+    # Get data from JSON or Form
+    if request.is_json:
+        data = request.json
+    else:
+        data = request.form
+
+    prediction_id = data.get('prediction_id')
+    side = data.get('side')
+    amount = data.get('amount')
+
+    if not all([prediction_id, side, amount]):
+        return jsonify({"error": "Missing required fields (prediction_id, side, amount)"}), 400
+
+    try:
+        amount = int(amount)
+    except ValueError:
+        return jsonify({"error": "Invalid amount format"}), 400
+
+    if amount <= 0:
+        return jsonify({"error": "Amount must be positive"}), 400
+
+    if side not in ['believe', 'doubt']:
+        return jsonify({"error": "Side must be 'believe' or 'doubt'"}), 400
+
+    predictions_cog = bot_instance.get_cog('Predictions')
+    if not predictions_cog:
+        return jsonify({"error": "Predictions cog not loaded"}), 500
+
+    # Call the cog method in the event loop
+    future = asyncio.run_coroutine_threadsafe(
+        predictions_cog.do_place_bet(
+            guild_id, user_id, prediction_id, side, amount
+        ),
+        bot_instance.loop
+    )
+    
+    try:
+        success, message = future.result(timeout=10)
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": message}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 def run_web_server(host='0.0.0.0', port=5000):

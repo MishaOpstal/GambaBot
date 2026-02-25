@@ -92,9 +92,13 @@ def main():
     import threading
 
     init_web_server(bot)
-    web_thread = threading.Thread(target=run_web_server, kwargs={'host': '0.0.0.0', 'port': 5000}, daemon=True)
+    web_thread = threading.Thread(
+        target=run_web_server,
+        kwargs={'host': '0.0.0.0', 'port': Config.PORT},
+        daemon=True
+    )
     web_thread.start()
-    logger.info("Web server started on http://0.0.0.0:5000")
+    logger.info(f"Web server started on http://0.0.0.0:{Config.PORT}")
 
     try:
         bot.run(Config.DISCORD_TOKEN)

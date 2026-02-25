@@ -78,9 +78,25 @@ class Points(discord.Cog):
         db.set_streamer_earn_rate(ctx.guild.id, ctx.author.id, rate)
 
         point_name = db.get_streamer_point_name(ctx.guild.id, ctx.author.id)
-        from config import Config
+        interval = db.get_streamer_earn_interval(ctx.guild.id, ctx.author.id)
         await ctx.respond(
-            f"✅ Your earning rate has been set to **{rate} {point_name}** per {Config.POINTS_EARN_INTERVAL}s!",
+            f"✅ Your earning rate has been set to **{rate} {point_name}** per {interval}s!",
+            ephemeral=True
+        )
+
+    @points.command(name="setinterval", description="Set how often viewers earn points")
+    @option("interval", int, description="Interval in seconds (60-3600)", min_value=60, max_value=3600)
+    async def set_point_interval(self, ctx: discord.ApplicationContext, interval: int):
+        """Set how often viewers earn points from watching you (in seconds)"""
+        await ctx.defer(ephemeral=True)
+
+        db.set_streamer_earn_interval(ctx.guild.id, ctx.author.id, interval)
+
+        point_name = db.get_streamer_point_name(ctx.guild.id, ctx.author.id)
+        rate = db.get_streamer_earn_rate(ctx.guild.id, ctx.author.id)
+        await ctx.respond(
+            f"✅ Your earning interval has been set to **{interval}s**. "
+            f"Viewers will now earn {rate} {point_name} every {interval} seconds.",
             ephemeral=True
         )
 
@@ -214,15 +230,14 @@ class Points(discord.Cog):
 
         point_name = db.get_streamer_point_name(ctx.guild.id, target.id)
         earn_rate = db.get_streamer_earn_rate(ctx.guild.id, target.id)
-
-        from config import Config
+        earn_interval = db.get_streamer_earn_interval(ctx.guild.id, target.id)
 
         embed = discord.Embed(
             title=f"📊 {target.display_name}'s Streamer Info",
             color=discord.Color.blue()
         )
         embed.add_field(name="Point Name", value=point_name, inline=True)
-        embed.add_field(name="Earning Rate", value=f"{earn_rate} per {Config.POINTS_EARN_INTERVAL}s", inline=True)
+        embed.add_field(name="Earning Rate", value=f"{earn_rate} per {earn_interval}s", inline=True)
 
         await ctx.respond(embed=embed)
 

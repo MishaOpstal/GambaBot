@@ -16,8 +16,12 @@ class Config:
     REDIS_DB = int(os.getenv("REDIS_DB", 0))
     REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
+    # Web Server
+    PORT = int(os.getenv("PORT", 5000))
+    DOMAIN = os.getenv("DOMAIN", "localhost")
+
     # Bot Settings
-    POINTS_EARN_INTERVAL = int(os.getenv("POINTS_EARN_INTERVAL", 300))  # 5 minutes default
+    DEFAULT_POINTS_EARN_INTERVAL = int(os.getenv("DEFAULT_POINTS_EARN_INTERVAL", 300))  # 5 minutes default
     DEFAULT_POINTS_EARN_RATE = int(os.getenv("DEFAULT_POINTS_EARN_RATE", 50))
     DEFAULT_STARTING_POINTS = int(os.getenv("DEFAULT_STARTING_POINTS", 1000))
 
