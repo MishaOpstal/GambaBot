@@ -1,9 +1,13 @@
 from flask import Flask, jsonify, render_template_string, abort, request, redirect, url_for
+from flask_sock import Sock
 from datetime import datetime
+import json
+import time
 from database import db
 import discord
 
 app = Flask(__name__)
+sock = Sock(app)
 
 # Store bot reference
 bot_instance = None
@@ -604,58 +608,162 @@ VISUAL_TEMPLATE = """
     <script>
         function updateTimers() {
             document.querySelectorAll('[data-end-time]').forEach(el => {
-                const endTime = new Date(el.dataset.endTime);
+                const endTimeStr = el.dataset.endTime;
+                if (!endTimeStr) return;
+                const endTime = new Date(endTimeStr);
                 const now = new Date();
                 const diff = Math.max(0, Math.floor((endTime - now) / 1000));
 
                 const minutes = Math.floor(diff / 60);
                 const seconds = diff % 60;
-                el.textContent = `⏰ ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-
+                
                 if (diff === 0) {
                     el.textContent = "🔒 CLOSED";
                     el.style.color = "#FF6B6B";
+                } else {
+                    el.textContent = `⏰ ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                    el.style.color = "#FFD700";
                 }
             });
         }
 
-        setInterval(updateTimers, 1000);
-        setInterval(() => location.reload(), 5000); // Refresh every 5 seconds for new data
+        function updatePrediction(id, pred) {
+            const card = document.getElementById(`card-${id}`);
+            if (!card) return;
 
-        window.onload = updateTimers;
+            // Update closed badge
+            const closedContainer = document.getElementById(`closed-container-${id}`);
+            if (closedContainer) {
+                if (pred.closed) {
+                    if (!closedContainer.innerHTML.trim()) {
+                        closedContainer.innerHTML = '<span class="closed-badge">BETTING CLOSED</span>';
+                    }
+                } else {
+                    closedContainer.innerHTML = '';
+                }
+            }
+
+            // Update question and answers
+            const questionEl = document.getElementById(`question-${id}`);
+            if (questionEl) questionEl.textContent = pred.question;
+            
+            const bAnswerEl = document.getElementById(`believe-answer-${id}`);
+            if (bAnswerEl) bAnswerEl.textContent = pred.believe_answer;
+            
+            const dAnswerEl = document.getElementById(`doubt-answer-${id}`);
+            if (dAnswerEl) dAnswerEl.textContent = pred.doubt_answer;
+
+            // Update bars
+            const bBar = document.getElementById(`believe-bar-${id}`);
+            const dBar = document.getElementById(`doubt-bar-${id}`);
+            const bPct = document.getElementById(`believe-pct-${id}`);
+            const dPct = document.getElementById(`doubt-pct-${id}`);
+
+            if (bBar) bBar.style.width = `${pred.believe_percentage}%`;
+            if (dBar) dBar.style.width = `${pred.doubt_percentage}%`;
+            if (bPct) bPct.textContent = `${pred.believe_percentage}%`;
+            if (dPct) dPct.textContent = `${pred.doubt_percentage}%`;
+
+            // Update stats
+            const bPoints = document.getElementById(`believe-points-${id}`);
+            if (bPoints) bPoints.textContent = pred.believe_points;
+            
+            const dPoints = document.getElementById(`doubt-points-${id}`);
+            if (dPoints) dPoints.textContent = pred.doubt_points;
+            
+            const totalB = document.getElementById(`total-bettors-${id}`);
+            if (totalB) totalB.textContent = pred.total_bettors;
+            
+            const pName = document.getElementById(`point-name-${id}`);
+            if (pName) pName.textContent = `Currency: ${pred.point_name}`;
+
+            // Update timer
+            const timer = document.getElementById(`timer-${id}`);
+            if (timer) {
+                if (pred.closed) {
+                    timer.style.display = 'none';
+                } else {
+                    timer.style.display = 'block';
+                    timer.dataset.endTime = pred.ending_timestamp;
+                }
+            }
+        }
+
+        // WebSocket setup
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const guild_id = "{{ guild_id }}";
+        const token = "{{ token }}";
+        const prediction_id = "{{ prediction_id | default('') }}";
+        
+        let wsUrl = `${protocol}//${window.location.host}/ws/${guild_id}/${token}`;
+        if (prediction_id) {
+            wsUrl += `/${prediction_id}`;
+        }
+        
+        function connectWS() {
+            const socket = new WebSocket(wsUrl);
+            
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (prediction_id) {
+                    updatePrediction(prediction_id, data);
+                } else {
+                    for (const [id, pred] of Object.entries(data)) {
+                        updatePrediction(id, pred);
+                    }
+                }
+            };
+
+            socket.onclose = function() {
+                console.log('WebSocket closed, reconnecting...');
+                setTimeout(connectWS, 2000); // Reconnect after 2 seconds
+            };
+
+            socket.onerror = function(err) {
+                console.error('WebSocket error:', err);
+                socket.close();
+            };
+        }
+
+        setInterval(updateTimers, 1000);
+        
+        window.onload = function() {
+            updateTimers();
+            connectWS();
+        };
     </script>
 </head>
 <body>
 {% macro render_prediction(prediction, pred_id) %}
-<div class="prediction-card">
+<div class="prediction-card" id="card-{{ pred_id }}">
     <div class="prediction-id">ID: {{ pred_id }}</div>
 
+    <div id="closed-container-{{ pred_id }}" style="text-align: center;">
     {% if prediction.closed %}
-    <div style="text-align: center;">
         <span class="closed-badge">BETTING CLOSED</span>
-    </div>
     {% endif %}
+    </div>
 
-    <div class="question">{{ prediction.question }}</div>
+    <div class="question" id="question-{{ pred_id }}">{{ prediction.question }}</div>
 
     <div class="answers-container">
         <div class="answer believe-answer">
             <div class="answer-label">✅ Believe</div>
-            <div class="answer-text">{{ prediction.believe_answer }}</div>
+            <div class="answer-text" id="believe-answer-{{ pred_id }}">{{ prediction.believe_answer }}</div>
         </div>
         <div class="answer doubt-answer">
             <div class="answer-label">❌ Doubt</div>
-            <div class="answer-text">{{ prediction.doubt_answer }}</div>
+            <div class="answer-text" id="doubt-answer-{{ pred_id }}">{{ prediction.doubt_answer }}</div>
         </div>
     </div>
 
     <div class="progress-container">
         <div class="progress-bar">
-            <div class="believe-bar" style="width: {{ prediction.believe_percentage }}%;">
-                <span class="bar-label">{{ prediction.believe_percentage }}%</span>
+            <div class="believe-bar" id="believe-bar-{{ pred_id }}" style="width: {{ prediction.believe_percentage }}%;">
+                <span class="bar-label" id="believe-pct-{{ pred_id }}">{{ prediction.believe_percentage }}%</span>
             </div>
-            <div class="doubt-bar" style="width: {{ prediction.doubt_percentage }}%;">
-                <span class="bar-label">{{ prediction.doubt_percentage }}%</span>
+            <div class="doubt-bar" id="doubt-bar-{{ pred_id }}" style="width: {{ prediction.doubt_percentage }}%;">
+                <span class="bar-label" id="doubt-pct-{{ pred_id }}">{{ prediction.doubt_percentage }}%</span>
             </div>
         </div>
     </div>
@@ -663,25 +771,23 @@ VISUAL_TEMPLATE = """
     <div class="stats">
         <div class="stat">
             <div class="stat-label">Believe Bets</div>
-            <div class="stat-value" style="color: #5BA3F5;">{{ prediction.believe_points }}</div>
+            <div class="stat-value" id="believe-points-{{ pred_id }}" style="color: #5BA3F5;">{{ prediction.believe_points }}</div>
         </div>
         <div class="stat">
             <div class="stat-label">Total Bettors</div>
-            <div class="stat-value">{{ prediction.total_bettors }}</div>
+            <div class="stat-value" id="total-bettors-{{ pred_id }}">{{ prediction.total_bettors }}</div>
         </div>
         <div class="stat">
             <div class="stat-label">Doubt Bets</div>
-            <div class="stat-value" style="color: #F55BA3;">{{ prediction.doubt_points }}</div>
+            <div class="stat-value" id="doubt-points-{{ pred_id }}" style="color: #F55BA3;">{{ prediction.doubt_points }}</div>
         </div>
     </div>
 
-    <div class="point-name">Currency: {{ prediction.point_name }}</div>
+    <div class="point-name" id="point-name-{{ pred_id }}">Currency: {{ prediction.point_name }}</div>
 
-    {% if not prediction.closed %}
-    <div class="timer" data-end-time="{{ prediction.ending_timestamp }}">
+    <div class="timer" id="timer-{{ pred_id }}" data-end-time="{{ prediction.ending_timestamp }}" style="{% if prediction.closed %}display: none;{% endif %}">
         ⏰ Calculating...
     </div>
-    {% endif %}
 </div>
 {% endmacro %}
 
@@ -758,8 +864,8 @@ def get_prediction_data(guild_id: int, user_id: int, prediction_id: str = None):
             "question": prediction['question'],
             "believe_answer": prediction['believe_answer'],
             "doubt_answer": prediction['doubt_answer'],
-            "believer_points": believe_points,
-            "doubter_points": doubt_points,
+            "believe_points": believe_points,
+            "doubt_points": doubt_points,
             "believe_percentage": believe_pct,
             "doubt_percentage": doubt_pct,
             "point_name": point_name,
@@ -879,6 +985,46 @@ def api_single_prediction(guild_id, token, prediction_id):
     return jsonify(data[prediction_id])
 
 
+@sock.route('/ws/<int:guild_id>/<token>')
+def ws_all_predictions(ws, guild_id, token):
+    """WebSocket for all predictions"""
+    # Verify token
+    result = db.verify_auth_token(token)
+    if not result or result[0] != guild_id:
+        return
+
+    user_id = result[1]
+
+    while True:
+        try:
+            data = get_prediction_data(guild_id, user_id)
+            if data:
+                ws.send(json.dumps(data))
+            time.sleep(2)
+        except Exception:
+            break
+
+
+@sock.route('/ws/<int:guild_id>/<token>/<prediction_id>')
+def ws_single_prediction(ws, guild_id, token, prediction_id):
+    """WebSocket for single prediction"""
+    # Verify token
+    result = db.verify_auth_token(token)
+    if not result or result[0] != guild_id:
+        return
+
+    user_id = result[1]
+
+    while True:
+        try:
+            data = get_prediction_data(guild_id, user_id, prediction_id)
+            if data and prediction_id in data:
+                ws.send(json.dumps(data[prediction_id]))
+            time.sleep(2)
+        except Exception:
+            break
+
+
 @app.route('/<int:guild_id>/<token>', methods=['GET'])
 def visual_all_predictions(guild_id, token):
     """Visual UI for all predictions"""
@@ -901,7 +1047,9 @@ def visual_all_predictions(guild_id, token):
         predictions=data,
         prediction_ids=list(data.keys()),
         guild_name=guild_name,
-        single_prediction=False
+        single_prediction=False,
+        guild_id=guild_id,
+        token=token
     )
 
 
@@ -926,7 +1074,10 @@ def visual_single_prediction(guild_id, token, prediction_id):
         VISUAL_TEMPLATE,
         single_prediction=data[prediction_id],
         prediction_ids=[prediction_id],
-        guild_name=guild_name
+        guild_name=guild_name,
+        guild_id=guild_id,
+        token=token,
+        prediction_id=prediction_id
     )
 
 
