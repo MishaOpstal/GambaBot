@@ -17,8 +17,9 @@ class Config:
     REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
     # Web Server
-    PORT = int(os.getenv("PORT", 5000))
     DOMAIN = os.getenv("DOMAIN", "localhost")
+    PORT = int(os.getenv("PORT", 5000))
+    USE_HTTPS = os.getenv("USE_HTTPS", "False") == "True"
 
     # Bot Settings
     DEFAULT_POINTS_EARN_INTERVAL = int(os.getenv("DEFAULT_POINTS_EARN_INTERVAL", 300))  # 5 minutes default

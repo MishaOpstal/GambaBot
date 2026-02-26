@@ -34,7 +34,6 @@ class BetView(View):
         predictions = db.get_all_guild_predictions(self.guild_id)
 
         if not predictions:
-            # No predictions available
             select = Select(
                 placeholder="No active predictions available",
                 options=[discord.SelectOption(label="None", value="none")],
@@ -42,11 +41,10 @@ class BetView(View):
             )
         else:
             options = []
-            for pred_id, prediction in list(predictions.items())[:25]:  # Discord limit
+            for pred_id, prediction in list(predictions.items())[:25]:
                 if prediction.get('closed') or prediction.get('resolved'):
                     continue
 
-                # Truncate question if too long
                 question = prediction['question']
                 if len(question) > 100:
                     question = question[:97] + "..."
@@ -58,7 +56,6 @@ class BetView(View):
                 ))
 
             if not options:
-                # No open predictions
                 select = Select(
                     placeholder="No active predictions available",
                     options=[discord.SelectOption(label="None", value="none")],
@@ -79,14 +76,12 @@ class BetView(View):
             prediction = db.get_prediction(self.guild_id, self.selected_prediction_id)
             self.selected_streamer_id = prediction.get('streamer_id') or prediction.get('creator_id')
 
-            # Check if user already bet
             existing_bet = db.get_bet(self.guild_id, self.selected_prediction_id, self.user_id)
             if existing_bet:
                 await interaction.response.send_message("❌ You've already placed a bet on this prediction!",
                                                         ephemeral=True)
                 return
 
-            # Add side selector
             self.clear_items()
             self.add_item(self.create_side_select(prediction))
             await interaction.response.edit_message(view=self)
@@ -116,7 +111,6 @@ class BetView(View):
         async def callback(interaction: discord.Interaction):
             self.selected_side = select.values[0]
 
-            # Get user's available points for the relevant streamer
             user_points = db.get_user_points(self.guild_id, self.user_id, self.selected_streamer_id)
 
             if user_points <= 0:
@@ -130,7 +124,6 @@ class BetView(View):
                 )
                 return
 
-            # Add amount selector
             self.clear_items()
             self.add_item(self.create_amount_select(user_points))
             await interaction.response.edit_message(view=self)
@@ -138,12 +131,10 @@ class BetView(View):
         select.callback = callback
         return select
 
-
     def create_amount_select(self, max_points: int) -> Select:
         """Create dropdown for selecting bet amount"""
         options = []
 
-        # Create preset amounts
         presets = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
         for amount in presets:
             if amount <= max_points:
@@ -152,7 +143,6 @@ class BetView(View):
                     value=str(amount)
                 ))
 
-        # Add "All in" option
         if max_points not in presets:
             options.append(discord.SelectOption(
                 label=f"All in ({max_points} points)",
@@ -168,7 +158,7 @@ class BetView(View):
 
         select = Select(
             placeholder=f"Choose bet amount (Max: {max_points})",
-            options=options[:25],  # Discord limit
+            options=options[:25],
             custom_id="amount_select"
         )
 
@@ -179,7 +169,6 @@ class BetView(View):
                 await interaction.response.send_message("❌ Invalid bet amount!", ephemeral=True)
                 return
 
-            # Place the bet
             await self.place_bet(interaction)
 
         select.callback = callback
@@ -229,9 +218,8 @@ class StreamerSelectView(View):
                 if opt.value == select.values[0]:
                     streamer_name = opt.label
                     break
-            
+
             if self.question and self.time_seconds:
-                # All info provided, start directly
                 await self.cog.do_start_prediction(
                     interaction.guild_id,
                     interaction.channel_id,
@@ -244,7 +232,6 @@ class StreamerSelectView(View):
                     interaction
                 )
             else:
-                # Need more info, show modal
                 await interaction.response.send_modal(
                     StartPredictionModal(self.cog, streamer_id=streamer_id, streamer_name=streamer_name)
                 )
@@ -290,7 +277,6 @@ class StartPredictionModal(discord.ui.Modal):
         question = self.children[0].value
         believe_answer = self.children[1].value
         doubt_answer = self.children[2].value
-        
         target_streamer_id = self.streamer_id
 
         try:
@@ -303,7 +289,6 @@ class StartPredictionModal(discord.ui.Modal):
             await interaction.response.send_message("❌ Time must be between 10 and 3600 seconds.", ephemeral=True)
             return
 
-        # Start the prediction
         await self.cog.do_start_prediction(
             interaction.guild_id,
             interaction.channel_id,
@@ -327,7 +312,6 @@ class PredictionControlView(View):
         self.member = member
         self.selected_prediction_id = None
 
-        # Add Start Prediction button
         start_btn = discord.ui.Button(
             label="Start New Prediction",
             style=discord.ButtonStyle.success,
@@ -337,7 +321,6 @@ class PredictionControlView(View):
         start_btn.callback = self.start_callback
         self.add_item(start_btn)
 
-        # Add prediction selector
         self.add_item(self.create_prediction_select())
 
     async def start_callback(self, interaction: discord.Interaction):
@@ -366,7 +349,6 @@ class PredictionControlView(View):
         """Create dropdown for selecting a prediction to manage"""
         predictions = db.get_all_guild_predictions(self.guild_id)
 
-        # Filter predictions the user is allowed to manage
         predictions = {pid: p for pid, p in predictions.items() if self.cog.can_manage_prediction(self.member, pid, p)}
 
         if not predictions:
@@ -377,7 +359,6 @@ class PredictionControlView(View):
             )
         else:
             options = []
-            # Sort by most recent (end_time)
             sorted_preds = sorted(predictions.items(), key=lambda x: x[1].get('start_time', ''), reverse=True)
             for pred_id, prediction in sorted_preds[:25]:
                 status = "🔒 Closed" if prediction.get('closed') else "⏰ Open"
@@ -407,11 +388,9 @@ class PredictionControlView(View):
             self.selected_prediction_id = select.values[0]
             prediction = db.get_prediction(self.guild_id, self.selected_prediction_id)
 
-            # Update view with management buttons
             self.clear_items()
-            self.add_item(self.create_prediction_select())  # Keep the selector
+            self.add_item(self.create_prediction_select())
 
-            # Add Resolve Believe button
             resolve_believe = discord.ui.Button(
                 label=f"Resolve: {prediction['believe_answer']}",
                 style=discord.ButtonStyle.success,
@@ -428,7 +407,6 @@ class PredictionControlView(View):
             resolve_believe.callback = resolve_believe_callback
             self.add_item(resolve_believe)
 
-            # Add Resolve Doubt button
             resolve_doubt = discord.ui.Button(
                 label=f"Resolve: {prediction['doubt_answer']}",
                 style=discord.ButtonStyle.danger,
@@ -445,7 +423,6 @@ class PredictionControlView(View):
             resolve_doubt.callback = resolve_doubt_callback
             self.add_item(resolve_doubt)
 
-            # Add Refund button
             refund_btn = discord.ui.Button(
                 label="Refund & Cancel",
                 style=discord.ButtonStyle.secondary,
@@ -462,7 +439,6 @@ class PredictionControlView(View):
             refund_btn.callback = refund_callback
             self.add_item(refund_btn)
 
-            # Add Show button
             show_btn = discord.ui.Button(
                 label="Show Stats",
                 style=discord.ButtonStyle.primary,
@@ -488,7 +464,6 @@ class Predictions(discord.Cog):
         self.bot = bot
         self.active_timers = {}  # (guild_id, prediction_id) -> end_time
         self.check_timers.start()
-        # Resume timers on startup
         self.bot.loop.create_task(self.resume_predictions())
 
     prediction = SlashCommandGroup("prediction", "Prediction and betting commands")
@@ -498,20 +473,17 @@ class Predictions(discord.Cog):
     @managers.command(name="add", description="Allow a user to create predictions in your name")
     @option("member", discord.Member, description="The user to allow")
     async def add_manager(self, ctx: discord.ApplicationContext, member: discord.Member):
-        """Allow a user to create predictions in your name"""
         db.add_prediction_manager(ctx.guild.id, ctx.author.id, member.id)
         await ctx.respond(f"✅ {member.mention} can now create predictions in your name!", ephemeral=True)
 
     @managers.command(name="remove", description="Remove a user's ability to create predictions in your name")
     @option("member", discord.Member, description="The user to remove")
     async def remove_manager(self, ctx: discord.ApplicationContext, member: discord.Member):
-        """Remove a user's ability to create predictions in your name"""
         db.remove_prediction_manager(ctx.guild.id, ctx.author.id, member.id)
         await ctx.respond(f"✅ {member.mention} can no longer create predictions in your name!", ephemeral=True)
 
     @managers.command(name="list", description="List users allowed to create predictions in your name")
     async def list_managers(self, ctx: discord.ApplicationContext):
-        """List users allowed to create predictions in your name"""
         managers = db.get_prediction_managers(ctx.guild.id, ctx.author.id)
         if not managers:
             await ctx.respond("❌ You haven't allowed anyone to create predictions in your name yet.", ephemeral=True)
@@ -525,23 +497,22 @@ class Predictions(discord.Cog):
             else:
                 mentions.append(f"User ID: {m_id}")
 
-        await ctx.respond(f"📋 **Users allowed to create predictions in your name:**\n" + "\n".join(mentions), ephemeral=True)
+        await ctx.respond(
+            f"📋 **Users allowed to create predictions in your name:**\n" + "\n".join(mentions),
+            ephemeral=True
+        )
 
     def get_eligible_streamers(self, guild: discord.Guild, user: discord.Member) -> List[discord.Member]:
         """Get list of streamers a user is allowed to manage predictions for"""
-        eligible_ids = {user.id}  # Always allowed to manage for self
+        eligible_ids = {user.id}
 
-        # Add streamers who have appointed this user as manager
         managed_streamers = db.get_managed_streamers(guild.id, user.id)
         eligible_ids.update(managed_streamers)
 
-        # If user has manage_messages, they can potentially manage for anyone who is an active streamer or known streamer
         if user.guild_permissions.manage_messages:
-            # Get all active streams in the guild
             active_streamer_ids = db.get_all_active_streams(guild.id)
             eligible_ids.update(active_streamer_ids)
-            
-            # Also include any "known" streamers (people who have bot settings)
+
             known_streamer_ids = db.get_all_known_streamers(guild.id)
             eligible_ids.update(known_streamer_ids)
 
@@ -550,8 +521,7 @@ class Predictions(discord.Cog):
             member = guild.get_member(s_id)
             if member:
                 members.append(member)
-        
-        # Sort by name
+
         members.sort(key=lambda x: x.display_name.lower())
         return members
 
@@ -568,11 +538,9 @@ class Predictions(discord.Cog):
 
         streamer_id = prediction.get('streamer_id') or prediction.get('creator_id')
 
-        # User is the streamer themselves
         if member.id == streamer_id:
             return True
 
-        # User is a delegate for the streamer
         if db.is_prediction_manager(member.guild.id, streamer_id, member.id):
             return True
 
@@ -600,11 +568,9 @@ class Predictions(discord.Cog):
 
                 end_time = datetime.fromisoformat(prediction['end_time'])
 
-                # If prediction hasn't expired yet, resume timer
                 if datetime.now() < end_time and not prediction.get('closed'):
                     self.active_timers[(guild_id, prediction_id)] = end_time
                     resumed_count += 1
-                # If prediction expired while bot was down, close it now
                 elif not prediction.get('closed'):
                     channel = guild.get_channel(prediction.get('channel_id'))
                     if channel:
@@ -621,7 +587,6 @@ class Predictions(discord.Cog):
 
         for (guild_id, prediction_id), end_time in list(self.active_timers.items()):
             if current_time >= end_time:
-                # Timer expired
                 prediction = db.get_prediction(guild_id, prediction_id)
                 if not prediction:
                     del self.active_timers[(guild_id, prediction_id)]
@@ -641,7 +606,6 @@ class Predictions(discord.Cog):
 
     @prediction.command(name="manage", description="Manage predictions using an interactive menu")
     async def manage_predictions(self, ctx: discord.ApplicationContext):
-        """Manage predictions using an interactive menu"""
         await ctx.defer(ephemeral=True)
         view = PredictionControlView(ctx.guild.id, self, ctx.author)
         await ctx.respond("Prediction Management Menu:", view=view, ephemeral=True)
@@ -661,28 +625,24 @@ class Predictions(discord.Cog):
             believe_answer: Optional[str] = None,
             doubt_answer: Optional[str] = None
     ):
-        """Start a new prediction"""
         eligible = self.get_eligible_streamers(ctx.guild, ctx.author)
 
         if not eligible:
             await ctx.respond("❌ You don't have permission to start predictions for anyone!", ephemeral=True)
             return
 
-        # If streamer provided, check eligibility
         if streamer:
             if streamer not in eligible:
                 await ctx.respond(f"❌ You don't have permission to start predictions for {streamer.mention}!", ephemeral=True)
                 return
-            
+
             target_streamer_id = streamer.id
             target_streamer_name = streamer.display_name
         else:
-            # If only one eligible, use that
             if len(eligible) == 1:
                 target_streamer_id = eligible[0].id
                 target_streamer_name = eligible[0].display_name
             else:
-                # Need to select streamer
                 await ctx.respond(
                     "Choose which streamer you are starting this prediction for:",
                     view=StreamerSelectView(eligible, self, time_seconds, question, believe_answer, doubt_answer),
@@ -690,7 +650,6 @@ class Predictions(discord.Cog):
                 )
                 return
 
-        # If we have all required info, start directly
         if time_seconds and question and believe_answer and doubt_answer:
             await self.do_start_prediction(
                 ctx.guild.id,
@@ -704,7 +663,6 @@ class Predictions(discord.Cog):
                 ctx
             )
         else:
-            # Otherwise show modal
             await ctx.send_modal(StartPredictionModal(self, streamer_id=target_streamer_id, streamer_name=target_streamer_name))
 
     async def do_start_prediction(
@@ -720,7 +678,6 @@ class Predictions(discord.Cog):
             ctx: Union[discord.ApplicationContext, discord.Interaction] = None
     ) -> str:
         """Internal method to actually create the prediction. Returns prediction_id."""
-        # Handle Discord response if ctx provided
         respond = None
         if ctx:
             if isinstance(ctx, discord.ApplicationContext):
@@ -731,10 +688,8 @@ class Predictions(discord.Cog):
                     await ctx.response.defer()
                 respond = ctx.followup.send
 
-        # Generate unique prediction ID
         prediction_id = str(uuid.uuid4())[:8]
 
-        # Create prediction
         end_time = datetime.now() + timedelta(seconds=time_seconds)
         prediction_data = {
             'question': question,
@@ -752,7 +707,6 @@ class Predictions(discord.Cog):
         db.create_prediction(guild_id, prediction_id, prediction_data)
         self.active_timers[(guild_id, prediction_id)] = end_time
 
-        # Post to Discord
         guild = self.bot.get_guild(guild_id)
         if guild:
             point_name = db.get_streamer_point_name(guild_id, streamer_id)
@@ -789,7 +743,6 @@ class Predictions(discord.Cog):
             interaction: discord.Interaction = None
     ):
         """Internal method to actually place a bet."""
-        # Get prediction details
         prediction = db.get_prediction(guild_id, prediction_id)
         if not prediction:
             if interaction:
@@ -803,34 +756,27 @@ class Predictions(discord.Cog):
 
         streamer_id = prediction.get('streamer_id') or prediction.get('creator_id')
 
-        # Check if user already bet
         existing_bet = db.get_bet(guild_id, prediction_id, user_id)
         if existing_bet:
             if interaction:
                 await interaction.response.send_message("❌ You've already placed a bet on this prediction!", ephemeral=True)
             return False, "Already bet"
 
-        # Check points
         current_points = db.get_user_points(guild_id, user_id, streamer_id)
         if current_points < amount:
             if interaction:
                 await interaction.response.send_message("❌ You don't have enough points!", ephemeral=True)
             return False, "Not enough points"
 
-        # Deduct points
         db.set_user_points(guild_id, user_id, streamer_id, current_points - amount)
-
-        # Place bet
         db.place_bet(guild_id, prediction_id, user_id, side, amount)
 
-        # Get bet statistics for the response
         all_bets = db.get_all_bets(guild_id, prediction_id)
         believe_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'believe'}
         doubt_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'doubt'}
         believe_pct, doubt_pct = calculate_percentages(believe_bets, doubt_bets)
 
         if interaction:
-            # Get streamer info for embed
             guild = interaction.guild
             streamer = guild.get_member(streamer_id)
             streamer_name = streamer.display_name if streamer else f"User {streamer_id}"
@@ -861,7 +807,6 @@ class Predictions(discord.Cog):
         """Place a bet using interactive dropdowns"""
         await ctx.defer(ephemeral=True)
 
-        # Create and send the bet view
         view = BetView(ctx.guild.id, self, ctx.author.id)
 
         if not view.children or (len(view.children) == 1 and view.children[0].disabled):
@@ -880,12 +825,10 @@ class Predictions(discord.Cog):
                 view = PredictionControlView(ctx.guild.id, self, ctx.author)
                 await ctx.respond("Choose a prediction to manage:", view=view, ephemeral=True)
                 return
-            # If interaction but missing params, we can't do much without more UI
             elif isinstance(ctx, discord.Interaction) and not ctx.response.is_done():
                 await ctx.response.send_message("❌ Missing prediction ID or winner.", ephemeral=True)
                 return
 
-        # Determine guild_id and respond method
         if isinstance(ctx, discord.ApplicationContext):
             guild_id = ctx.guild.id
             respond = ctx.respond
@@ -893,7 +836,6 @@ class Predictions(discord.Cog):
             guild_id = ctx.guild_id
             respond = ctx.followup.send
 
-        # Check if already deferred
         try:
             if isinstance(ctx, discord.ApplicationContext):
                 await ctx.defer()
@@ -908,7 +850,6 @@ class Predictions(discord.Cog):
             await respond(f"❌ No prediction found with ID `{prediction_id}`!")
             return
 
-        # Check permissions
         member = ctx.author if isinstance(ctx, discord.ApplicationContext) else ctx.user
         if not self.can_manage_prediction(member, prediction_id, prediction):
             await respond("❌ You don't have permission to resolve this prediction!", ephemeral=True)
@@ -921,17 +862,18 @@ class Predictions(discord.Cog):
         winning_side = winner
         streamer_id = prediction.get('streamer_id') or prediction.get('creator_id')
 
-        # Get all bets
         all_bets = db.get_all_bets(guild_id, prediction_id)
         if not all_bets:
             await respond("❌ No bets were placed on this prediction!")
-            # Mark as resolved
             prediction['resolved'] = True
             db.create_prediction(guild_id, prediction_id, prediction)
+            # Archive as resolved with no bets
+            from web_server import store_resolved_prediction, archive_bets
+            archive_bets(guild_id, prediction_id, winning_side)
+            store_resolved_prediction(guild_id, prediction_id, prediction, winning_side, 0)
             db.delete_prediction(guild_id, prediction_id)
             return
 
-        # Separate bets by side
         believe_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'believe'}
         doubt_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'doubt'}
 
@@ -939,37 +881,46 @@ class Predictions(discord.Cog):
         loser_bets = doubt_bets if winning_side == 'believe' else believe_bets
 
         if not winner_bets:
-            await respond("❌ No one bet on the winning side!")
-            # Refund losers
+            await respond("❌ No one bet on the winning side! Refunding all bets.")
             for user_id, bet_data in all_bets.items():
                 current = db.get_user_points(guild_id, int(user_id), streamer_id)
                 db.set_user_points(guild_id, int(user_id), streamer_id, current + bet_data['amount'])
 
+            # Archive as cancelled since no winners
+            from web_server import store_cancelled_prediction, archive_bets
+            archive_bets(guild_id, prediction_id)
+            store_cancelled_prediction(guild_id, prediction_id, prediction)
             db.clear_all_bets(guild_id, prediction_id)
             db.delete_prediction(guild_id, prediction_id)
             if (guild_id, prediction_id) in self.active_timers:
                 del self.active_timers[(guild_id, prediction_id)]
             return
 
-        # Calculate winnings
         winnings = calculate_winnings(loser_bets, winner_bets)
+
+        # Store payout info on each bet before archiving
+        for user_id, winning_amount in winnings.items():
+            bet_key = f"bet:{guild_id}:{prediction_id}:{user_id}"
+            import json
+            raw = db.redis.get(bet_key)
+            if raw:
+                bet_data = json.loads(raw)
+                bet_data['payout'] = winning_amount
+                db.redis.set(bet_key, json.dumps(bet_data))
 
         # Distribute winnings
         for user_id, winning_amount in winnings.items():
             current = db.get_user_points(guild_id, int(user_id), streamer_id)
             db.set_user_points(guild_id, int(user_id), streamer_id, current + winning_amount)
 
-        # Find the biggest winner
         biggest_winner_id = max(winnings, key=winnings.get)
         biggest_winner_amount = winnings[biggest_winner_id]
-        
-        # Try to get member from guild
+
         guild = self.bot.get_guild(guild_id)
         biggest_winner = guild.get_member(biggest_winner_id) if guild else None
 
         believe_pct, doubt_pct = calculate_percentages(believe_bets, doubt_bets)
 
-        # Create results embed
         winning_answer = prediction['believe_answer'] if winning_side == 'believe' else prediction['doubt_answer']
 
         embed = discord.Embed(
@@ -992,6 +943,14 @@ class Predictions(discord.Cog):
 
         await respond(embed=embed)
 
+        # Archive to history BEFORE cleanup
+        from web_server import store_resolved_prediction, archive_bets
+        archive_bets(guild_id, prediction_id, winning_side)
+        store_resolved_prediction(
+            guild_id, prediction_id, prediction,
+            winning_side, sum(loser_bets.values())
+        )
+
         # Cleanup
         db.clear_all_bets(guild_id, prediction_id)
         db.delete_prediction(guild_id, prediction_id)
@@ -1011,7 +970,6 @@ class Predictions(discord.Cog):
                 await ctx.response.send_message("❌ Missing prediction ID.", ephemeral=True)
                 return
 
-        # Determine guild_id and respond method
         if isinstance(ctx, discord.ApplicationContext):
             guild_id = ctx.guild.id
             respond = ctx.respond
@@ -1019,7 +977,6 @@ class Predictions(discord.Cog):
             guild_id = ctx.guild_id
             respond = ctx.followup.send
 
-        # Check if already deferred
         try:
             if isinstance(ctx, discord.ApplicationContext):
                 await ctx.defer()
@@ -1034,7 +991,6 @@ class Predictions(discord.Cog):
             await respond(f"❌ No prediction found with ID `{prediction_id}`!")
             return
 
-        # Check permissions
         member = ctx.author if isinstance(ctx, discord.ApplicationContext) else ctx.user
         if not self.can_manage_prediction(member, prediction_id, prediction):
             await respond("❌ You don't have permission to refund this prediction!", ephemeral=True)
@@ -1042,11 +998,15 @@ class Predictions(discord.Cog):
 
         streamer_id = prediction.get('streamer_id') or prediction.get('creator_id')
 
-        # Refund all bets
         all_bets = db.get_all_bets(guild_id, prediction_id)
         for user_id, bet_data in all_bets.items():
             current = db.get_user_points(guild_id, int(user_id), streamer_id)
             db.set_user_points(guild_id, int(user_id), streamer_id, current + bet_data['amount'])
+
+        # Archive to history BEFORE cleanup
+        from web_server import store_cancelled_prediction, archive_bets
+        archive_bets(guild_id, prediction_id, winner_side=None)
+        store_cancelled_prediction(guild_id, prediction_id, prediction)
 
         # Cleanup
         db.clear_all_bets(guild_id, prediction_id)
@@ -1073,13 +1033,11 @@ class Predictions(discord.Cog):
         )
 
         for pred_id, prediction in predictions.items():
-            # Calculate time remaining
             end_time = datetime.fromisoformat(prediction['end_time'])
             time_remaining = max(0, int((end_time - datetime.now()).total_seconds()))
 
             status = "🔒 Closed" if prediction.get('closed') else f"⏰ {format_time(time_remaining)}"
 
-            # Get bet counts
             all_bets = db.get_all_bets(ctx.guild.id, pred_id)
             total_bets = len(all_bets)
             total_points = sum(bet['amount'] for bet in all_bets.values())
@@ -1107,7 +1065,6 @@ class Predictions(discord.Cog):
                 await ctx.response.send_message("❌ Missing prediction ID.", ephemeral=True)
                 return
 
-        # Determine guild_id, respond method and user_id
         if isinstance(ctx, discord.ApplicationContext):
             guild_id = ctx.guild.id
             respond = ctx.respond
@@ -1117,7 +1074,6 @@ class Predictions(discord.Cog):
             respond = ctx.followup.send
             author_id = ctx.user.id
 
-        # Check if already deferred
         try:
             if isinstance(ctx, discord.ApplicationContext):
                 await ctx.defer()
@@ -1132,14 +1088,12 @@ class Predictions(discord.Cog):
             await respond(f"❌ No prediction found with ID `{prediction_id}`!")
             return
 
-        # Get bet statistics
         all_bets = db.get_all_bets(guild_id, prediction_id)
         believe_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'believe'}
         doubt_bets = {uid: bet['amount'] for uid, bet in all_bets.items() if bet['side'] == 'doubt'}
 
         believe_pct, doubt_pct = calculate_percentages(believe_bets, doubt_bets)
 
-        # Calculate time remaining
         end_time = datetime.fromisoformat(prediction['end_time'])
         time_remaining = max(0, int((end_time - datetime.now()).total_seconds()))
 
@@ -1161,7 +1115,6 @@ class Predictions(discord.Cog):
             inline=False
         )
 
-        # Show if user has bet
         user_bet = db.get_bet(guild_id, prediction_id, author_id)
         if user_bet:
             embed.add_field(
@@ -1179,7 +1132,6 @@ class Predictions(discord.Cog):
 
         token = db.generate_auth_token(ctx.guild.id, ctx.author.id)
 
-        # Try to DM the user
         try:
             dm_embed = discord.Embed(
                 title="🔑 Your Web UI Auth Token",
@@ -1193,9 +1145,8 @@ class Predictions(discord.Cog):
                 inline=False
             )
             dm_embed.add_field(
-                name="Web UI URLs",
-                value=f"All predictions: `{Config.DOMAIN}/{ctx.guild.id}/{token}`\n"
-                      f"Specific prediction: `{Config.DOMAIN}/{ctx.guild.id}/{token}/[prediction_id]`",
+                name="Web UI URL",
+                value=f"`{Config.DOMAIN}/{ctx.guild.id}/{token}`",
                 inline=False
             )
 
@@ -1226,39 +1177,42 @@ class Predictions(discord.Cog):
         """Get the web UI link for the current guild"""
         await ctx.defer(ephemeral=True)
 
-        # Get server's web UI URL
         base_url = Config.DOMAIN
+        port = Config.PORT
+        use_https = Config.USE_HTTPS
+
+        # If not port specified, use only base_url as target_url, otherwise include :port
+        if not port:
+            if use_https:
+                target_url = f"https://{base_url}"
+            else:
+                target_url = f"http://{base_url}"
+        else:
+            if use_https:
+                target_url = f"https://{base_url}:{port}"
+            else:
+                target_url = f"http://{base_url}:{port}"
 
         embed = discord.Embed(
             title="🌐 Web UI Access",
             description=f"Access your predictions for **{ctx.guild.name}**",
             color=discord.Color.blue()
         )
-
         embed.add_field(
             name="Step 1: Get Your Token",
-            value="Use `/authtoken refresh` to generate your auth token if you haven't already.",
+            value="Use `/authtoken refresh` to generate your auth token.",
             inline=False
         )
-
         embed.add_field(
             name="Step 2: Visit Web UI",
-            value=f"[Click here to access Web UI]({base_url}/{ctx.guild.id})",
+            value=f"[Click here to access Web UI]({target_url}/{ctx.guild.id})",
             inline=False
         )
-
-        embed.add_field(
-            name="Step 3: Enter Token",
-            value="Paste your auth token on the web page to view your predictions.",
-            inline=False
-        )
-
         embed.add_field(
             name="📋 Direct URL",
-            value=f"`{base_url}/{ctx.guild.id}`",
+            value=f"`{target_url}/{ctx.guild.id}`",
             inline=False
         )
-
         embed.set_footer(text="Keep your auth token secret!")
 
         await ctx.respond(embed=embed, ephemeral=True)
@@ -1281,7 +1235,7 @@ class Predictions(discord.Cog):
 
         try:
             await channel.send(embed=embed)
-        except:
+        except Exception:
             pass
 
 
