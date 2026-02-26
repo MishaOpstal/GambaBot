@@ -94,7 +94,7 @@ def main():
     init_web_server(bot)
     web_thread = threading.Thread(
         target=run_web_server,
-        kwargs={'host': '0.0.0.0', 'port': Config.PORT},
+        kwargs={'host': '0.0.0.0', 'port': 5000},
         daemon=True
     )
     web_thread.start()
