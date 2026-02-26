@@ -8,7 +8,14 @@ services:
     volumes:
       - ./redis.conf:/usr/local/etc/redis/redis.conf
       - redis_data:/data
-    command: sh -c "envsubst < /usr/local/etc/redis/redis.conf | redis-server -"
+    # Only pass --requirepass if REDIS_PASSWORD is non-empty.
+    # This prevents the "AUTH called without password configured" error
+    # when REDIS_PASSWORD is blank in .env.
+    command: >
+      sh -c "
+        redis-server /usr/local/etc/redis/redis.conf
+        $${REDIS_PASSWORD:+--requirepass \"$${REDIS_PASSWORD}\"}
+      "
     networks:
       - bot-network
 
@@ -26,7 +33,7 @@ services:
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - REDIS_DB=${REDIS_DB:-0}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - DOMAIN=${DOMAIN:-http://localhost:5000}
       - PORT=${PORT:-5000}
       - USE_HTTPS=${USE_HTTPS:-False}
@@ -34,7 +41,7 @@ services:
       - DEFAULT_POINTS_EARN_RATE=${DEFAULT_POINTS_EARN_RATE:-50}
       - DEFAULT_STARTING_POINTS=${DEFAULT_STARTING_POINTS:-1000}
     ports:
-      - "${PORT:-5000}:5000"  # Map host port to container port 5000
+      - "${PORT:-5000}:5000"
     depends_on:
       - redis
     networks:
