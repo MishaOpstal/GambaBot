@@ -19,6 +19,7 @@ class Config:
     # Web Server
     DOMAIN = os.getenv("DOMAIN", "localhost")
     PORT = int(os.getenv("PORT", 5000))
+    USE_PORT_IN_URL = os.getenv("USE_PORT_IN_URL", "False") == "True"
     USE_HTTPS = os.getenv("USE_HTTPS", "False") == "True"
 
     # Bot Settings

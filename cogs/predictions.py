@@ -1180,9 +1180,10 @@ class Predictions(discord.Cog):
         base_url = Config.DOMAIN
         port = Config.PORT
         use_https = Config.USE_HTTPS
+        use_port_in_url = Config.USE_PORT_IN_URL
 
         # If not port specified, use only base_url as target_url, otherwise include :port
-        if not port:
+        if not port or not use_port_in_url:
             if use_https:
                 target_url = f"https://{base_url}"
             else:
