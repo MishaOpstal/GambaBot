@@ -12,10 +12,13 @@ services:
     # This prevents the "AUTH called without password configured" error
     # when REDIS_PASSWORD is blank in .env.
     command: >
-      sh -c "
-        redis-server /usr/local/etc/redis/redis.conf
-        $${REDIS_PASSWORD:+--requirepass \"$${REDIS_PASSWORD}\"}
-      "
+      sh -c '
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server /usr/local/etc/redis/redis.conf --requirepass "$$REDIS_PASSWORD"
+        else
+          exec redis-server /usr/local/etc/redis/redis.conf
+        fi
+      '
     networks:
       - bot-network
 
