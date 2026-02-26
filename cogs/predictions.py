@@ -897,15 +897,16 @@ class Predictions(discord.Cog):
             return
 
         winnings = calculate_winnings(loser_bets, winner_bets)
+        profits = {uid: winnings[uid] - winner_bets[uid] for uid in winnings}
 
-        # Store payout info on each bet before archiving
-        for user_id, winning_amount in winnings.items():
+        # Store payout info (profit) on each bet before archiving
+        for user_id, profit_amount in profits.items():
             bet_key = f"bet:{guild_id}:{prediction_id}:{user_id}"
             import json
             raw = db.redis.get(bet_key)
             if raw:
                 bet_data = json.loads(raw)
-                bet_data['payout'] = winning_amount
+                bet_data['payout'] = profit_amount
                 db.redis.set(bet_key, json.dumps(bet_data))
 
         # Distribute winnings
@@ -913,14 +914,16 @@ class Predictions(discord.Cog):
             current = db.get_user_points(guild_id, int(user_id), streamer_id)
             db.set_user_points(guild_id, int(user_id), streamer_id, current + winning_amount)
 
-        biggest_winner_id = max(winnings, key=winnings.get)
-        biggest_winner_amount = winnings[biggest_winner_id]
+        biggest_winner_id = None
+        biggest_winner_amount = 0
+        if profits:
+            biggest_winner_id = max(profits, key=profits.get)
+            biggest_winner_amount = profits[biggest_winner_id]
 
         guild = self.bot.get_guild(guild_id)
-        biggest_winner = guild.get_member(biggest_winner_id) if guild else None
+        biggest_winner = guild.get_member(biggest_winner_id) if guild and biggest_winner_id else None
 
         believe_pct, doubt_pct = calculate_percentages(believe_bets, doubt_bets)
-
         winning_answer = prediction['believe_answer'] if winning_side == 'believe' else prediction['doubt_answer']
 
         embed = discord.Embed(
@@ -935,11 +938,19 @@ class Predictions(discord.Cog):
                   f"❌ Doubt: {doubt_pct}% ({len(doubt_bets)} bets, {sum(doubt_bets.values())} points)",
             inline=False
         )
-        embed.add_field(
-            name="👑 Biggest Winner",
-            value=f"{biggest_winner.mention if biggest_winner else 'Unknown'} won **{biggest_winner_amount}** points!",
-            inline=False
-        )
+
+        if biggest_winner and biggest_winner_amount > 0:
+            embed.add_field(
+                name="👑 Biggest Winner",
+                value=f"{biggest_winner.mention} won **{biggest_winner_amount}** points!",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="👑 Winners",
+                value=f"{len(winnings)} winners got their stake back.",
+                inline=False
+            )
 
         await respond(embed=embed)
 
