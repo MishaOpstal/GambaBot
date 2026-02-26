@@ -3,9 +3,12 @@ services:
     image: redis:7-alpine
     container_name: prediction-bot-redis
     restart: unless-stopped
+    env_file:
+      - .env
     volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: sh -c "envsubst < /usr/local/etc/redis/redis.conf | redis-server -"
     networks:
       - bot-network
 
