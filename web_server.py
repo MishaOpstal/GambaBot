@@ -6,6 +6,7 @@ import time
 import asyncio
 from database import db
 import discord
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 sock = Sock(app)
@@ -16,6 +17,7 @@ bot_instance = None
 def init_web_server(bot):
     global bot_instance
     bot_instance = bot
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
